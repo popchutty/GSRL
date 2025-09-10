@@ -92,7 +92,7 @@ extern "C" void test_task(void *argument)
  */
 extern "C" void dr16ITCallback(uint8_t *Buffer, uint16_t Length)
 {
-    dr16.receiveDr16RxDataFromISR(Buffer);
+    dr16.receiveRxDataFromISR(Buffer);
 }
 
 

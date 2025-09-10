@@ -48,19 +48,31 @@ public:
     enum SwitchStatus : uint8_t {
         SWITCH_UP = 1,
         SWITCH_DOWN,
-        SWITCH_MIDDLE,
+        SWITCH_MIDDLE
+    };
+
+    // DR16遥控器拨杆跳变事件
+    enum SwitchEvent : int8_t {
+        SWITCH_NO_CHANGE,
         SWITCH_TOGGLE_UP_MIDDLE,
         SWITCH_TOGGLE_MIDDLE_UP,
         SWITCH_TOGGLE_DOWN_MIDDLE,
-        SWITCH_TOGGLE_MIDDLE_DOWN
+        SWITCH_TOGGLE_MIDDLE_DOWN,
+        SWITCH_EVENT_NO_UPDATE_ERROR = -1 // 检查Dr16RemoteControl::updateEvent()函数是否提前调用
     };
 
     // DR16遥控器按键状态
     enum KeyStatus : uint8_t {
         KEY_RELEASE = 0,
-        KEY_PRESS,
+        KEY_PRESS
+    };
+
+    // DR16遥控器按键跳变事件
+    enum KeyEvent : int8_t {
+        KEY_NO_CHANGE,
         KEY_TOGGLE_PRESS_RELEASE,
-        KEY_TOGGLE_RELEASE_PRESS
+        KEY_TOGGLE_RELEASE_PRESS,
+        KEY_EVENT_NO_UPDATE_ERROR = -1 // 检查Dr16RemoteControl::updateEvent()函数是否提前调用
     };
 
     // DR16遥控器键盘按键对应索引
@@ -80,7 +92,8 @@ public:
         KEY_X,
         KEY_C,
         KEY_V,
-        KEY_B
+        KEY_B,
+        KEY_TOTAL_NUMBER // 键盘按键枚举值总数
     };
 
 private:
@@ -92,19 +105,24 @@ private:
     fp32 m_leftStickX;
     fp32 m_leftStickY;
     fp32 m_scrollWheel;
-    SwitchStatus m_rightSwitch;
-    SwitchStatus m_lastRightSwitch; // 上一次右拨杆状态
-    SwitchStatus m_leftSwitch;
-    SwitchStatus m_lastLeftSwitch; // 上一次左拨杆状态
+    SwitchStatus m_rightSwitchStatus;
+    SwitchStatus m_lastRightSwitchStatus; // 上一次右拨杆状态
+    SwitchEvent m_rightSwitchEvent;
+    SwitchStatus m_leftSwitchStatus;
+    SwitchStatus m_lastLeftSwitchStatus; // 上一次左拨杆状态
+    SwitchEvent m_leftSwitchEvent;
     fp32 m_mouseXSpeed;
     fp32 m_mouseYSpeed;
     fp32 m_mouseWheelSpeed;
-    KeyStatus m_mouseLeftKey;
-    KeyStatus m_lastMouseLeftKey; // 上一次鼠标左键状态
-    KeyStatus m_mouseRightKey;
-    KeyStatus m_lastMouseRightKey; // 上一次鼠标右键状态
-    KeyStatus m_keyboardKey[16];
-    KeyStatus m_lastKeyboardKey[16]; // 上一次键盘按键状态
+    KeyStatus m_mouseLeftKeyStatus;
+    KeyStatus m_lastMouseLeftKeyStatus; // 上一次鼠标左键状态
+    KeyEvent m_mouseLeftKeyEvent;
+    KeyStatus m_mouseRightKeyStatus;
+    KeyStatus m_lastMouseRightKeyStatus; // 上一次鼠标右键状态
+    KeyEvent m_mouseRightKeyEvent;
+    KeyStatus m_keyboardKeyStatus[KEY_TOTAL_NUMBER];
+    KeyStatus m_lastKeyboardKeyStatus[KEY_TOTAL_NUMBER]; // 上一次键盘按键状态
+    KeyEvent m_keyboardKeyEvent[KEY_TOTAL_NUMBER];
 
     // 遥控器连接状态检测
     uint32_t m_uartRxTimestamp; // 使用毫秒级HAL_GetTick()获取, 判断遥控器连接状态
@@ -115,90 +133,101 @@ private:
 public:
     Dr16RemoteControl();
 
-    void receiveDr16RxDataFromISR(const uint8_t *data);
-    void decodeDr16RxData();
+    void receiveRxDataFromISR(const uint8_t *data);
+    void decodeRxData();
+    void updateEvent();
 
     fp32 getRightStickX()
     {
-        decodeDr16RxData();
+        decodeRxData();
         return m_rightStickX;
     }
     fp32 getRightStickY()
     {
-        decodeDr16RxData();
+        decodeRxData();
         return m_rightStickY;
     }
     fp32 getLeftStickX()
     {
-        decodeDr16RxData();
+        decodeRxData();
         return m_leftStickX;
     }
     fp32 getLeftStickY()
     {
-        decodeDr16RxData();
+        decodeRxData();
         return m_leftStickY;
     }
-    SwitchStatus getRightSwitch()
+    SwitchStatus getRightSwitchStatus()
     {
-        m_lastRightSwitch   = m_rightSwitch;
-        m_rightSwitch       = (SwitchStatus)m_originalRxDataPointer->Switch_2;
-        return judgeSwitchStatus(m_rightSwitch, m_lastRightSwitch);
+        return m_rightSwitchStatus = (SwitchStatus)m_originalRxDataPointer->Switch_2;
     }
-    SwitchStatus getLeftSwitch()
+    SwitchEvent getRightSwitchEvent()
     {
-        m_lastLeftSwitch    = m_leftSwitch;
-        m_leftSwitch        = (SwitchStatus)m_originalRxDataPointer->Switch_1;
-        return judgeSwitchStatus(m_leftSwitch, m_lastLeftSwitch);
+        return m_rightSwitchEvent;
+    }
+    SwitchStatus getLeftSwitchStatus()
+    {
+        return m_leftSwitchStatus = (SwitchStatus)m_originalRxDataPointer->Switch_1;
+    }
+    SwitchEvent getLeftSwitchEvent()
+    {
+        return m_leftSwitchEvent;
     }
     fp32 getMouseX()
     {
-        decodeDr16RxData();
+        decodeRxData();
         return m_mouseXSpeed;
     }
     fp32 getMouseY()
     {
-        decodeDr16RxData();
+        decodeRxData();
         return m_mouseYSpeed;
     }
     fp32 getMouseWheel()
     {
-        decodeDr16RxData();
+        decodeRxData();
         return m_mouseWheelSpeed;
     }
-    KeyStatus getMouseLeftKey()
+    KeyStatus getMouseLeftKeyStatus()
     {
-        m_lastMouseLeftKey  = m_mouseLeftKey;
-        m_mouseLeftKey      = (KeyStatus)m_originalRxDataPointer->Mouse_Left_Key;
-        return judgeKeyStatus(m_mouseLeftKey, m_lastMouseLeftKey);
+        return m_mouseLeftKeyStatus = (KeyStatus)m_originalRxDataPointer->Mouse_Left_Key;
     }
-    KeyStatus getMouseRightKey()
+    KeyEvent getMouseLeftKeyEvent()
     {
-        m_lastMouseRightKey = m_mouseRightKey;
-        m_mouseRightKey     = (KeyStatus)m_originalRxDataPointer->Mouse_Right_Key;
-        return judgeKeyStatus(m_mouseRightKey, m_lastMouseRightKey);
+        return m_mouseLeftKeyEvent;
     }
-    KeyStatus getKeyboardKey(KeyboardKeyIndex keyIndex)
+    KeyStatus getMouseRightKeyStatus()
     {
-        m_lastKeyboardKey[keyIndex] = m_keyboardKey[keyIndex];
-        m_keyboardKey[keyIndex]     = (KeyStatus)(m_originalRxDataPointer->Keyboard_Key >> keyIndex & 0x01);
-        return judgeKeyStatus(m_keyboardKey[keyIndex], m_lastKeyboardKey[keyIndex]);
+        return m_mouseRightKeyStatus = (KeyStatus)m_originalRxDataPointer->Mouse_Right_Key;
+    }
+    KeyEvent getMouseRightKeyEvent()
+    {
+        return m_mouseRightKeyEvent;
+    }
+    KeyStatus getKeyboardKeyStatus(KeyboardKeyIndex keyIndex)
+    {
+        return m_keyboardKeyStatus[keyIndex] = (KeyStatus)(m_originalRxDataPointer->Keyboard_Key >> keyIndex & 0x01);
+    }
+    KeyEvent getKeyboardKeyEvent(KeyboardKeyIndex keyIndex)
+    {
+        return m_keyboardKeyEvent[keyIndex];
     }
     bool isDr16RemoteControlConnected()
     {
-        decodeDr16RxData();
+        decodeRxData();
         return m_isDr16Connected;
     }
 
 private:
     /**
-     * @brief 根据当前状态和上一次状态返回拨杆包含跳变的状态
+     * @brief 根据当前状态和上一次状态返回拨杆的跳变事件
      * @note 本函数为内部函数, 请勿在外部调用
      */
-    SwitchStatus judgeSwitchStatus(SwitchStatus currentStatus, SwitchStatus lastStatus)
+    SwitchEvent judgeSwitchStatus(SwitchStatus currentStatus, SwitchStatus lastStatus)
     {
         switch (currentStatus - lastStatus) {
             case 0:
-                return currentStatus;
+                return SWITCH_NO_CHANGE;
             case -2:
                 return SWITCH_TOGGLE_MIDDLE_UP;
             case -1:
@@ -208,25 +237,25 @@ private:
             case 2:
                 return SWITCH_TOGGLE_UP_MIDDLE;
             default:
-                return currentStatus;
+                return SWITCH_NO_CHANGE;
         }
     }
 
     /**
-     * @brief 根据当前状态和上一次状态返回按键包含跳变的状态
+     * @brief 根据当前状态和上一次状态返回按键的跳变事件
      * @note 本函数为内部函数, 请勿在外部调用
      */
-    KeyStatus judgeKeyStatus(KeyStatus currentStatus, KeyStatus lastStatus)
+    KeyEvent judgeKeyStatus(KeyStatus currentStatus, KeyStatus lastStatus)
     {
         switch (currentStatus - lastStatus) {
             case 0:
-                return currentStatus;
+                return KEY_NO_CHANGE;
             case -1:
                 return KEY_TOGGLE_PRESS_RELEASE;
             case 1:
                 return KEY_TOGGLE_RELEASE_PRESS;
             default:
-                return currentStatus;
+                return KEY_NO_CHANGE;
         }
     }
 };
