@@ -1,0 +1,3 @@
+[submodule "GSRL/Dependence/eigen"]
+	path = GSRL/Dependence/eigen
+	url = https://gitlab.com/libeigen/eigen.git
