@@ -50,7 +50,7 @@ uint32_t Motor::getMotorFeedbackMessageID() const
 }
 
 /**
- * @brief 获取电机CAN控制消息头指针
+ * @brief 获取电机CAN控制消息结构体头指针
  * @return const CAN_TxHeaderTypeDef* 电机CAN控制消息头指针
  */
 const CAN_TxHeaderTypeDef *Motor::getMotorControlHeader() const
@@ -59,7 +59,7 @@ const CAN_TxHeaderTypeDef *Motor::getMotorControlHeader() const
 }
 
 /**
- * @brief 获取电机电机CAN控制数据, 同时检测电机连接状态
+ * @brief 获取电机电机CAN控制数组数据, 同时检测电机连接状态
  * @return const uint8_t* 电机CAN控制数据motroControlData[8]
  */
 const uint8_t *Motor::getMotorControlData()
@@ -71,7 +71,7 @@ const uint8_t *Motor::getMotorControlData()
         m_motorLastFeedbackSequence = m_motorFeedbackSequence; // 滚动更新反馈数据序号
     }
 
-    return m_motorControlData;
+    return m_motorControlData;  
 }
 
 /**
@@ -698,3 +698,101 @@ void MotorDM4310::setMotorZeroPosition()
 {
     m_setZeroPositionFlag = true;
 }
+
+/******************************************************************************
+ *                           MG系列电机类实现
+ ******************************************************************************/
+
+/**
+ * @brief MG系列电机类构造函数, 用于初始化MG系列电机参数，自动调用
+ * @param motorID MG电机ID (控制ID和反馈ID相同)
+ * @param controller 绑定的控制器，如PID
+ * @param encoderOffset 编码器偏移量，默认为0
+ * @param encoderResolution 编码器分辨率，直接取得最大值65535以兼容不同分辨率型号
+ * @note motorID范围为1-32，对应反馈ID和控制ID均为0x140 + motorID，Ox140为MG系列电机CAN ID基地址
+ */
+MotorMG::MotorMG(uint8_t motorID,
+                 Controller *controller,
+                 uint16_t encoderOffset)
+    : Motor(0x140u + motorID,
+            0x140u + motorID,
+            controller,
+            encoderOffset),
+
+      m_motorID(motorID),
+      m_encoderResolution(65535),
+      m_iqRaw(0),
+      m_speedDegreePerSecond(0),
+      m_encoderRaw(0)
+{
+}
+
+
+
+
+
+/**
+ * @brief 解析MG电机反馈数据核心函数
+ * @param rxMessage CAN接收消息，是结构体
+ * @return true ID匹配，解析成功
+ * @return false ID不匹配，解析失败
+ * @note 目前只解析0x9C命令，其他命令可根据需要添加
+ *       0x9C命令数据格式参考MG系列电机协议文档，为：温度、扭矩电流、速度、原始编码器
+ */
+bool MotorMG::decodeCanRxMessage(const can_rx_message_t &rxMessage)
+{
+    //看看ID是否是MG电机
+    if (rxMessage.header.StdId != m_motorFeedbackMessageID) {
+        return false; 
+    }
+
+    uint8_t cmd = rxMessage.data[0];
+
+    switch (cmd) {
+        case 0xA1: 
+        m_temperature = (int8_t)rxMessage.data[1];
+        m_currentTorqueCurrent = (int16_t)((rxMessage.data[3] << 8) | rxMessage.data[2]);
+        m_speedDegreePerSecond = (int16_t)((rxMessage.data[5] << 8) | rxMessage.data[4]);
+        m_currentAngularVelocity = (fp32)m_speedDegreePerSecond * (MATH_PI / 180.0f);        
+        m_encoderRaw = (uint16_t)((rxMessage.data[7] << 8) | rxMessage.data[6]);
+        uint16_t encAdj = (uint16_t)(m_encoderRaw - m_encoderOffset); 
+        m_currentAngle = (fp32)encAdj * 2.0f * MATH_PI / (fp32)m_encoderResolution;
+
+
+
+        break;
+        
+        //有需要再根据协议添加解析其他命令
+        case 0x9C:
+            break;
+        case 0xA2:
+            break;
+        case 0xA3:
+            break;
+        case 0xA4: 
+            break;
+        case 0x9D: 
+            break;
+        default:
+            return false; 
+    }
+    return true;
+}
+
+/**
+ * @brief 将控制器输出转换为MG系列电机CAN控制数据
+ */
+void MotorMG::convertControllerOutputToMotorControlData()
+{
+    int16_t iqControl = (int16_t)m_controllerOutput; // 控制量范围 -2048~2048 对应协议
+
+    m_motorControlData[0] = 0xA1; // 命令字节：转矩闭环
+    m_motorControlData[1] = 0x00;
+    m_motorControlData[2] = 0x00;
+    m_motorControlData[3] = 0x00;
+    m_motorControlData[4] = (uint8_t)(iqControl & 0xFF);        // 低字节
+    m_motorControlData[5] = (uint8_t)((iqControl >> 8) & 0xFF); // 高字节
+    m_motorControlData[6] = 0x00;
+    m_motorControlData[7] = 0x00;
+}
+

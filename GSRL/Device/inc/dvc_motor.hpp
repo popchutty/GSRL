@@ -47,7 +47,7 @@ protected:
     int16_t m_roundCount;              // 整圈数，用于计算小数圈数
     fp32 m_zeroAngle;                  // 零位角度，用于计算小数圈数
     fp32 m_currentRevolutions;         // 小数圈数 n*2pi(rad)
-    int16_t m_currentTorqueCurrent;
+    int16_t m_currentTorqueCurrent;    // 转矩电流，非转矩
     int8_t m_temperature;              // ℃
     uint8_t m_motorFeedbackErrorCount;
     bool m_isMotorConnected;
@@ -65,9 +65,9 @@ protected:
 public:
     virtual ~Motor() = default;
     // 通信相关
-    uint32_t getMotorControlMessageID() const;
-    uint32_t getMotorFeedbackMessageID() const;
-    const CAN_TxHeaderTypeDef *getMotorControlHeader() const;
+    uint32_t getMotorControlMessageID() const; // 发给电机的控制报文 ID
+    uint32_t getMotorFeedbackMessageID() const; // 电机回复的反馈报文 ID
+    const CAN_TxHeaderTypeDef *getMotorControlHeader() const; 
     const uint8_t *getMotorControlData();
     bool decodeCanRxMessageFromQueue(const can_rx_message_t *rxMessage, uint8_t Size);
     bool decodeCanRxMessageFromISR(const can_rx_message_t *rxMessage);
@@ -141,6 +141,9 @@ public:
     bool decodeCanRxMessage(const can_rx_message_t &rxMessage) override;
 };
 
+
+//-------- 达妙DMJ4310电机类实现 --------//
+
 /**
  * @brief 达妙DMJ4310电机类
  * @note 请使用达妙电机默认固件，本类基于MIT模式单力矩输出控制帧，其余计算(如PID)在stm32上实现
@@ -178,6 +181,38 @@ public:
     void convertControllerOutputToMotorControlData() override;
     bool decodeCanRxMessage(const can_rx_message_t &rxMessage) override;
     void setMotorZeroPosition();
+};
+
+//-------- MG系列电机类实现 --------//
+
+/**
+ * @brief MG系列电机类
+ * @details 该类实现了Motor类的纯虚函数，用于控制MG系列电机
+ * @param motorID MG电机ID (控制ID和反馈ID相同)
+ * @param controller 绑定的控制器，如PID
+ * @param encoderOffset 编码器偏移量，默认为0
+ * @param encoderResolution 编码器分辨率(直接取最高65535，这样可兼容低分辨率型号)
+ * @param m_speedDegreePerSecond 电机速度，单位度每秒
+ * @param m_encoderRaw 电机原始编码器值
+ */
+
+class MotorMG : public Motor
+{
+public:
+    MotorMG(uint8_t motorID,
+            Controller *controller,
+            uint16_t encoderOffset = 0);
+
+    void convertControllerOutputToMotorControlData() override;
+    bool decodeCanRxMessage(const can_rx_message_t &rxMessage) override;
+    uint8_t getMotorID() const { return m_motorID; }
+
+private:
+    uint8_t m_motorID;
+    uint16_t m_encoderResolution;
+    int16_t m_iqRaw;
+    int16_t m_speedDegreePerSecond;
+    uint16_t m_encoderRaw;
 };
 
 /* Exported constants --------------------------------------------------------*/
