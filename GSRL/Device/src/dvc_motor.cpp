@@ -749,7 +749,7 @@ bool MotorMG::decodeCanRxMessage(const can_rx_message_t &rxMessage)
     uint8_t cmd = rxMessage.data[0];
 
     switch (cmd) {
-        case 0xA1: 
+        case 0xA1: {
         m_temperature = (int8_t)rxMessage.data[1];
         m_currentTorqueCurrent = (int16_t)((rxMessage.data[3] << 8) | rxMessage.data[2]);
         m_speedDegreePerSecond = (int16_t)((rxMessage.data[5] << 8) | rxMessage.data[4]);
@@ -757,7 +757,7 @@ bool MotorMG::decodeCanRxMessage(const can_rx_message_t &rxMessage)
         m_encoderRaw = (uint16_t)((rxMessage.data[7] << 8) | rxMessage.data[6]);
         uint16_t encAdj = (uint16_t)(m_encoderRaw - m_encoderOffset); 
         m_currentAngle = (fp32)encAdj * 2.0f * MATH_PI / (fp32)m_encoderResolution;
-
+        }
 
 
         break;
