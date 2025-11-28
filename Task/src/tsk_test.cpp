@@ -18,7 +18,7 @@
 /* Define --------------------------------------------------------------------*/
 // PID 控制器参数
 SimplePID::PIDParam param = {
-    10.0f,  // Kp
+    0,  // Kp
     0.0f,   // Ki
     500.0f, // Kd
     10.0f,  // outputLimit
@@ -50,6 +50,7 @@ extern "C" void test_task(void *argument)
     CAN_Init(&hcan1, can1RxCallback);
 
     uint16_t count   = 0;
+    int16_t count2  = 0;
     fp32 targetAngle = 0.0f;
 
     // 获取任务开始时间
@@ -57,15 +58,19 @@ extern "C" void test_task(void *argument)
 
     while (1) {
         count++;
-
-        // 每当计数超过 1000 次时更新目标角度
+        count2++;
+        //每当计数超过 1000 次时更新目标角度
         if (count > 1000) {
             targetAngle = GSRLMath::normalizeAngle(MATH_PI * 2 / 3 + targetAngle); // 控制电机角度在合理范围内
             count       = 0;
         }
-
-        // 使用闭环控制调整电机角度
-        mgMotor.angleClosedloopControl(targetAngle);
+        if (count2 >=2048)
+        {
+            count2 = -2048;
+            /* code */
+        }
+        
+        mgMotor.openloopControl(100); // 开环控制，控制值为 count2
 
         // 传输电机控制数据
         transmitMotorsControlData();

@@ -796,3 +796,20 @@ void MotorMG::convertControllerOutputToMotorControlData()
     m_motorControlData[7] = 0x00;
 }
 
+// void MotorMG::convertControllerOutputToMotorControlData()
+// {
+//     // 协议里的 speedControl（一般是 float，单位按手册：dps 或 rad/s）
+//     float speedControl = (float)m_controllerOutput;
+
+//     // 按照手册里的写法，把这个 4 字节变量拆成 4 个 uint8_t
+//     uint8_t *p = (uint8_t *)&speedControl;
+
+//     m_motorControlData[0] = 0xA2; // 命令字节：速度闭环
+//     m_motorControlData[1] = 0x00;
+//     m_motorControlData[2] = 0x00;
+//     m_motorControlData[3] = 0x00;
+//     m_motorControlData[4] = p[0]; // 速度控制低字节
+//     m_motorControlData[5] = p[1]; // 速度控制
+//     m_motorControlData[6] = p[2]; // 速度控制
+//     m_motorControlData[7] = p[3]; // 速度控制高字节
+// }
