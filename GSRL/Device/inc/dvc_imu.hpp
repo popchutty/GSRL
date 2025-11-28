@@ -47,9 +47,27 @@ protected:
 public:
     virtual ~IMU() = default;
     virtual bool init() = 0;
-    const Vector3f &solveAttitude();
-    const Vector3f &getEulerAngle() const;
-    const fp32 *getQuaternion() const;
+
+    /**
+     * @brief 姿态解算
+     * @note 默认实现：调用 m_ahrs->update() 进行软件解算 (适用于 BMI088 等输出原始数据的传感器)
+     * @note 派生类重写：如果传感器(如 H30)内部已有解算结果，可重写此函数直接返回结果，跳过软件解算
+     */
+    virtual const Vector3f &solveAttitude();
+
+    /**
+     * @brief 获取欧拉角
+     * @note 默认实现：返回 m_ahrs 中的计算结果
+     * @note 派生类重写：直接返回传感器内部解算的欧拉角
+     */
+    virtual const Vector3f &getEulerAngle() const;
+
+    /**
+     * @brief 获取四元数
+     * @note 默认实现：返回 m_ahrs 中的计算结果
+     * @note 派生类重写：直接返回传感器内部解算的四元数
+     */
+    virtual const fp32 *getQuaternion() const;
 
 protected:
     IMU(AHRS *ahrs);
@@ -150,7 +168,7 @@ private:
 
 
 /**
- * @brief H30系列 UART接口IMU类
+ * @brief WEEHLTEC_H30 UART接口IMU类
  * @details 适用于H30等使用YIS通讯协议的模块
  */
 class H30 : public IMU
@@ -176,6 +194,24 @@ public:
     H30(AHRS *ahrs, UART_HandleTypeDef *huart, ErrorCallback errorCallback = nullptr);
 
     bool init() override;
+
+    /**
+     * @brief 姿态解算 (重写)
+     * @note 直接使用 H30 内部硬件解算结果，不经过软件 AHRS
+     */
+    const Vector3f &solveAttitude() override;
+
+    /**
+     * @brief 获取欧拉角 (重写)
+     * @note 返回 H30 内部解算的欧拉角
+     */
+    const Vector3f &getEulerAngle() const override;
+
+    /**
+     * @brief 获取四元数 (重写)
+     * @note 返回 H30 内部解算的四元数
+     */
+    const fp32 *getQuaternion() const override;
 
     /**
      * @brief 数据接收回调处理

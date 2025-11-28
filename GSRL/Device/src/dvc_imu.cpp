@@ -555,6 +555,33 @@ bool H30::init()
 }
 
 /**
+ * @brief 姿态解算 (使用H30内部解算结果)
+ */
+const IMU::Vector3f &H30::solveAttitude()
+{
+    readRawData();
+    dataCalibration();
+    // 直接返回模块输出的欧拉角，不经过AHRS计算
+    return m_eulerRawData;
+}
+
+/**
+ * @brief 获取欧拉角 (使用H30内部解算结果)
+ */
+const IMU::Vector3f &H30::getEulerAngle() const
+{
+    return m_eulerRawData;
+}
+
+/**
+ * @brief 获取四元数 (使用H30内部解算结果)
+ */
+const fp32 *H30::getQuaternion() const
+{
+    return m_quatRawData;
+}
+
+/**
  * @brief 数据接收回调处理
  * @param data 接收到的数据指针
  * @param length 数据长度
