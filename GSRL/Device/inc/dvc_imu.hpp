@@ -195,12 +195,24 @@ private:
     // 协议常量
     static constexpr uint8_t FRAME_HEAD_0 = 0x59;
     static constexpr uint8_t FRAME_HEAD_1 = 0x53;
+    static constexpr uint8_t DATA_ID_TEMP = 0x01;
     static constexpr uint8_t DATA_ID_ACCEL = 0x10;
     static constexpr uint8_t DATA_ID_GYRO = 0x20;
+    static constexpr uint8_t DATA_ID_MAG_NORM = 0x30;
+    static constexpr uint8_t DATA_ID_MAG_RAW = 0x31;
+    static constexpr uint8_t DATA_ID_EULER = 0x40;
+    static constexpr uint8_t DATA_ID_QUAT = 0x41;
+    static constexpr uint8_t DATA_ID_TIMESTAMP = 0x51;
 
     // 接收缓冲区 
     uint8_t m_rxBuffer[128]; 
     uint16_t m_rxLength;
+
+    // 额外数据存储
+    fp32 m_temperature;
+    Vector3f m_eulerRawData; // 模块直接输出的欧拉角
+    fp32 m_quatRawData[4];   // 模块直接输出的四元数
+    uint32_t m_timestamp;    // 时间戳
 
     // 内部辅助函数
     void handleError(ErrorCode errorCode);

@@ -540,6 +540,8 @@ H30::H30(AHRS *ahrs, UART_HandleTypeDef *huart, ErrorCallback errorCallback)
 {
     m_errorCode = NO_ERROR;
     m_rxLength  = 0;
+    m_temperature = 0.0f;
+    m_timestamp = 0;
 }
 
 /**
@@ -626,6 +628,53 @@ void H30::readRawData()
                 }
                 break;
 
+            case DATA_ID_MAG_NORM: // 0x30: 磁场归一化
+            case DATA_ID_MAG_RAW:  // 0x31: 磁场强度 (mGauss)
+                if (len == 12) {
+                    int32_t temp;
+                    for (int i = 0; i < 3; i++) {
+                        temp = (int32_t)(pData[i * 4] | (pData[i * 4 + 1] << 8) | (pData[i * 4 + 2] << 16) | (pData[i * 4 + 3] << 24));
+                        if (dataID == DATA_ID_MAG_RAW)
+                            m_magnetRawData[i] = (fp32)temp * 0.001f; // mGauss
+                        else
+                            m_magnetRawData[i] = (fp32)temp * 0.000001f; // 归一化值
+                    }
+                }
+                break;
+
+            case DATA_ID_EULER: // 0x40: 欧拉角 (deg)
+                if (len == 12) {
+                    int32_t temp;
+                    for (int i = 0; i < 3; i++) {
+                        temp = (int32_t)(pData[i * 4] | (pData[i * 4 + 1] << 8) | (pData[i * 4 + 2] << 16) | (pData[i * 4 + 3] << 24));
+                        m_eulerRawData[i] = (fp32)temp * 0.000001f;
+                    }
+                }
+                break;
+
+            case DATA_ID_QUAT: // 0x41: 四元数
+                if (len == 16) {
+                    int32_t temp;
+                    for (int i = 0; i < 4; i++) {
+                        temp = (int32_t)(pData[i * 4] | (pData[i * 4 + 1] << 8) | (pData[i * 4 + 2] << 16) | (pData[i * 4 + 3] << 24));
+                        m_quatRawData[i] = (fp32)temp * 0.000001f;
+                    }
+                }
+                break;
+
+            case DATA_ID_TEMP: // 0x01: 温度
+                if (len == 2) {
+                    int16_t temp = (int16_t)(pData[0] | (pData[1] << 8));
+                    m_temperature = (fp32)temp * 0.01f;
+                }
+                break;
+
+            case DATA_ID_TIMESTAMP: // 0x51: 时间戳
+                if (len == 4) {
+                    m_timestamp = (uint32_t)(pData[0] | (pData[1] << 8) | (pData[2] << 16) | (pData[3] << 24));
+                }
+                break;
+
             default:
                 break;
         }
@@ -643,6 +692,7 @@ void H30::dataCalibration()
     
     m_gyroData = m_gyroRawData * DEG2RAD; // 转成弧度
     m_accelData = m_accelRawData;         // 加速度保持 m/s^2
+    m_magnetData = m_magnetRawData;       // 磁力计数据
 }
 
 /**
