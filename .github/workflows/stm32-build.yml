@@ -23,20 +23,24 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Install GNU Arm Toolchain(arm-none-eabi) by action
+    - name: Install GNU Arm Toolchain(arm-none-eabi) by Action
       uses: carlosperate/arm-none-eabi-gcc-action@v1
-      run: arm-none-eabi-gcc --version
 
-    # - name: Install GNU Arm Toolchain(arm-none-eabi) by apt
+    # - name: Install GNU Arm Toolchain(arm-none-eabi) by APT
     #   run: |
     #     sudo apt-get update
     #     sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi
-    #     arm-none-eabi-gcc --version
 
     - name: Install Ninja
       run: |
         sudo apt-get update
         sudo apt-get install -y ninja-build
+
+    - name: Check Toolchain version
+      run: |
+        arm-none-eabi-gcc --version
+        cmake --version
+        ninja --version
 
     - name: Configure CMake
       # Configure CMake to use the preset in CMakePresets.json file.
