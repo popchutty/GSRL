@@ -59,7 +59,7 @@ const CAN_TxHeaderTypeDef *Motor::getMotorControlHeader() const
 }
 
 /**
- * @brief 获取电机电机CAN控制数据, 同时检测电机连接状态
+ * @brief 获取电机电机CAN控制数组数据, 同时检测电机连接状态
  * @return const uint8_t* 电机CAN控制数据motroControlData[8]
  */
 const uint8_t *Motor::getMotorControlData()
@@ -71,7 +71,7 @@ const uint8_t *Motor::getMotorControlData()
         m_motorLastFeedbackSequence = m_motorFeedbackSequence; // 滚动更新反馈数据序号
     }
 
-    return m_motorControlData;
+    return m_motorControlData;  
 }
 
 /**
