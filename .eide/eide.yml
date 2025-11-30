@@ -1,8 +1,8 @@
 version: "4.1"
 name: GMStdRobotLib
 type: ARM
-deviceName: STM32F407IGHx
-packDir: .pack/Keil/STM32F4xx_DFP.2.17.1
+deviceName: STM32F407IG
+packDir: .pack/Keil/STM32F4xx_DFP.1.0.8
 srcDirs: []
 virtualFolder:
   name: <virtual_root>
@@ -179,6 +179,7 @@ targets:
         - USE_HAL_DRIVER
         - STM32F407xx
         - EIGEN_NO_MALLOC
+        - STM32F40_41xxx
       incList:
         - .
         - CubeMX_BSP/Inc
@@ -252,7 +253,7 @@ targets:
       OpenOCD:
         baseAddr: "0x08000000"
         bin: ""
-        interface: cmsis-dap
+        interface: stlink
         target: stm32f4x
       STLink:
         address: "0x08000000"
@@ -264,4 +265,4 @@ targets:
         resetMode: default
         runAfterProgram: true
         speed: 4000
-    uploader: OpenOCD
+    uploader: STLink

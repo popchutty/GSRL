@@ -526,7 +526,7 @@ inline void BMI088::writeSingleReg(const SPIConfig &spiConfig, uint8_t reg, cons
 
 
 /******************************************************************************
- *                            H30类实现
+ *                            WEEHLTEC_H30类实现
  ******************************************************************************/
 
 /**
@@ -601,25 +601,27 @@ void H30::onReceiveData(uint8_t *data, uint16_t length)
  */
 void H30::readRawData()
 {
-    if (m_rxLength < 7) { //  Header(2) + TID(2) + LEN(1) + CK(2)
-        return;
-    }
-
-    // 1. 检查帧头
+    // 1. 检查帧头 (0x59 0x53)
     if (m_rxBuffer[0] != FRAME_HEAD_0 || m_rxBuffer[1] != FRAME_HEAD_1) {
         handleError(FRAME_HEAD_ERROR);
         return;
     }
 
     // 2. 检查长度
+    // Header(2) + TID(2) + LEN(1) + Payload(N) + CK(2)
     uint8_t payload_len = m_rxBuffer[4];
-    if (m_rxLength < payload_len + 7) { 
+    uint8_t full_packet_len = payload_len + 7;
+
+    if (m_rxLength < full_packet_len) { 
         handleError(FRAME_LENGTH_ERROR);
         return;
     }
 
     // 3. 校验和检查
-    if (!validateChecksum(m_rxBuffer, payload_len + 5)) { // 5 = Header(2) + TID(2) + LEN(1)
+    // H30协议校验范围：TID(2) + LEN(1) + Payload(N)
+    // 起始位置：m_rxBuffer + 2
+    // 校验长度：payload_len + 3 (2字节TID + 1字节LEN + N字节Payload)
+    if (!validateChecksum(m_rxBuffer + 2, payload_len + 3)) { 
         handleError(CHECKSUM_ERROR);
         return;
     }
