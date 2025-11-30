@@ -56,6 +56,7 @@ protected:
     fp32 m_targetAngularVelocity;      // rad/s
     fp32 m_targetRevolutions;          // 圈n*2pi(rad)
     int16_t m_targetTorqueCurrent;
+    fp32 m_incrementalAngle;         // 角增量rad
     // 控制器
     Controller *m_controller;          // 符合 Controller 接口的控制器
     fp32 m_controllerOutput;
@@ -205,14 +206,25 @@ public:
 
     void convertControllerOutputToMotorControlData() override;
     bool decodeCanRxMessage(const can_rx_message_t &rxMessage) override;
+    void convertAngularVelocityToMotorContorlData(); // 角速度闭环控制
+    void convertAngularVelocityToMotorContorlData(fp32 AngleVelocity);
+    void convertSingleCircleAngleToMotorControlData();// 单圈角度闭环控制
+    void convertSingleCircleAngleToMotorControlData(fp32 targetAngle, fp32 maxVelocity, bool ClockwiseOrNot); 
+    void convertMutipleCircleAngleToMotorControlData();// 多圈角度闭环控制
+    void convertMutipleCircleAngleToMotorControlData(fp32 targetAngle, fp32 maxVelocity);
+
     uint8_t getMotorID() const { return m_motorID; }
 
 private:
+    uint16_t m_openloopLimit;
     uint8_t m_motorID;
     uint16_t m_encoderResolution;
     int16_t m_iqRaw;
     int16_t m_speedDegreePerSecond;
     uint16_t m_encoderRaw;
+    uint8_t m_reductionRatio; //减速比，是一个大于1的整数
+    fp32 m_maxVelocity;       //最大速度，单位rad/s
+    bool m_ClockwiseOrNot;    //是否顺时针旋转
 };
 
 /* Exported constants --------------------------------------------------------*/
