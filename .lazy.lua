@@ -15,7 +15,7 @@ return {
             "--function-arg-placeholders",
             "--fallback-style=llvm",
             "--compile-commands-dir=build/Debug",
-            "--query-driver=/opt/st/stm32cubeclt_1.19.0/GNU-tools-for-STM32/bin/arm-none-eabi-*",
+            "--query-driver=/usr/bin/arm-none-eabi-*",
             "--pch-storage=memory",
           },
         },
