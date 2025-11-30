@@ -65,9 +65,9 @@ protected:
 public:
     virtual ~Motor() = default;
     // 通信相关
-    uint32_t getMotorControlMessageID() const;
-    uint32_t getMotorFeedbackMessageID() const;
-    const CAN_TxHeaderTypeDef *getMotorControlHeader() const;
+    uint32_t getMotorControlMessageID() const; // 发给电机的控制报文 ID
+    uint32_t getMotorFeedbackMessageID() const; // 电机回复的反馈报文 ID
+    const CAN_TxHeaderTypeDef *getMotorControlHeader() const; 
     const uint8_t *getMotorControlData();
     bool decodeCanRxMessageFromQueue(const can_rx_message_t *rxMessage, uint8_t Size);
     bool decodeCanRxMessageFromISR(const can_rx_message_t *rxMessage);
@@ -141,6 +141,9 @@ public:
     bool decodeCanRxMessage(const can_rx_message_t &rxMessage) override;
 };
 
+
+
+
 /**
  * @brief 达妙DMJ4310电机类
  * @note 请使用达妙电机默认固件，本类基于MIT模式单力矩输出控制帧，其余计算(如PID)在stm32上实现
@@ -152,7 +155,7 @@ public:
 class MotorDM4310 : public Motor
 {
 public:
-    enum DMMotorState
+    enum DMMotorState : uint8_t
     {
         DISABLE = 0x00,
         ENABLE = 0x01,
@@ -178,6 +181,50 @@ public:
     void convertControllerOutputToMotorControlData() override;
     bool decodeCanRxMessage(const can_rx_message_t &rxMessage) override;
     void setMotorZeroPosition();
+};
+
+
+
+/**
+ * @brief MG系列电机类
+ * @details 该类实现了Motor类的纯虚函数，用于控制MG系列电机
+ * @param motorID MG电机ID (控制ID和反馈ID相同)
+ * @param controller 绑定的控制器，如PID
+ * @param encoderOffset 编码器偏移量，默认为0
+ * @param encoderResolution 编码器分辨率(直接取最高65535，这样可兼容低分辨率型号) 本测试代码使用的电机型号为Motor MG8016EI6
+ * @param m_speedDegreePerSecond 电机速度，单位度每秒
+ * @param m_encoderRaw 电机原始编码器值
+ */
+
+class MotorMG8016EI6 : public Motor
+{
+public:
+    MotorMG8016EI6(uint8_t motorID,
+            Controller *controller,
+            uint16_t encoderOffset = 0);
+
+    void convertControllerOutputToMotorControlData() override;
+    bool decodeCanRxMessage(const can_rx_message_t &rxMessage) override;
+    void hardwareConvertAngularVelocityToMotorContorlData(); // 角速度闭环控制
+    void hardwareConvertAngularVelocityToMotorContorlData(fp32 AngleVelocity);
+    void hardwareConvertSingleCircleAngleToMotorControlData();// 单圈角度闭环控制
+    void hardwareConvertSingleCircleAngleToMotorControlData(fp32 targetAngle, fp32 maxVelocity, bool ClockwiseOrNot); 
+    void hardwareConvertMutipleCircleAngleToMotorControlData();// 多圈角度闭环控制
+    void hardwareConvertMutipleCircleAngleToMotorControlData(fp32 targetAngle, fp32 maxVelocity);
+
+    uint8_t getMotorID() const { return m_motorID; }
+
+private:  
+    int16_t m_speedDegreePerSecond;
+    int16_t m_iqRaw;  
+    uint8_t m_motorID;
+    uint16_t m_encoderResolution; 
+    uint16_t m_openloopLimit;
+    uint16_t m_encoderRaw;
+    uint8_t m_gearboxRatio; //减速比，是一个大于1的整数
+    fp32 m_maxVelocity;       //最大速度，单位rad/s
+     bool m_ClockwiseOrNot;    //是否顺时针旋转
+   
 };
 
 /* Exported constants --------------------------------------------------------*/

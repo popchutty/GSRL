@@ -62,6 +62,17 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined symbols
 )
 
+# Add compile options
+target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE
+    # Add user defined compile options
+    -fdiagnostics-color=always
+)
+
+target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
+    # Add user defined link options
+    -u _printf_float
+)
+
 # Remove wrong libob.a library dependency when using cpp files
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 

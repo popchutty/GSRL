@@ -1,0 +1,297 @@
+# *: 启用所有检查规则
+# -*-avoid-c-arrays: 排除避免C数组的检查（嵌入式项目常用C数组）
+# -*-uppercase-literal-suffix: 排除大写字面量后缀检查
+# -*-magic-numbers: 排除魔数检查（嵌入式项目常有硬件相关常数）
+# -altera-id-dependent-backward-branch: 排除Altera FPGA相关的向后分支检查
+# -altera-unroll-loops: 排除Altera循环展开检查
+# -android*: 排除所有Android相关检查
+# -bugprone-integer-division: 排除整数除法错误检查
+# -cert-dcl50-cpp: 排除CERT DCL50-CPP检查（函数不应定义为内联）
+# -cert-env33-c: 排除CERT ENV33-C检查（不应调用system()）
+# -cert-err34-c: 排除CERT ERR34-C检查（检测并处理函数错误）
+# -cert-err58-cpp: 排除CERT ERR58-CPP检查（异常安全）
+# -cert-flp30-c: 排除CERT FLP30-C检查（浮点数不应用于循环计数器）
+# -cert-msc30-c: 排除CERT MSC30-C检查（不应依赖随机数种子）
+# -cert-msc50-cpp: 排除CERT MSC50-CPP检查（不应使用伪随机数）
+# -clang-analyzer-core.CallAndMessage: 排除函数调用和消息传递分析
+# -clang-analyzer-core.NullDereference: 排除空指针解引用分析
+# -clang-analyzer-core.UndefinedBinaryOperatorResult: 排除未定义二元操作符分析
+# -clang-analyzer-core.uninitialized.Assign: 排除未初始化变量赋值分析
+# -clang-analyzer-core.VLASize: 排除变长数组大小分析
+# -clang-analyzer-cplusplus.NewDelete: 排除C++ new/delete分析
+# -clang-analyzer-cplusplus.NewDeleteLeaks: 排除C++ new/delete内存泄漏分析
+# -clang-analyzer-deadcode.DeadStores: 排除死存储分析
+# -clang-analyzer-optin.cplusplus.VirtualCall: 排除虚函数调用分析
+# -clang-analyzer-optin.performance.Padding: 排除结构体填充分析
+# -clang-analyzer-security.FloatLoopCounter: 排除浮点循环计数器安全检查
+# -clang-analyzer-security.insecureAPI.strcpy: 排除strcpy不安全API检查
+# -clang-analyzer-unix.API: 排除Unix API检查
+# -clang-analyzer-unix.cstring.BadSizeArg: 排除C字符串错误大小参数检查
+# -clang-analyzer-unix.Malloc: 排除malloc相关检查
+# -clang-analyzer-unix.MallocSizeof: 排除malloc sizeof检查
+# -cppcoreguidelines-c-copy-assignment-signature: 排除C++核心指南拷贝赋值签名检查
+# -cppcoreguidelines-interfaces-global-init: 排除全局初始化接口检查
+# -cppcoreguidelines-no-malloc: 排除禁止使用malloc检查
+# -cppcoreguidelines-non-private-member-variables-in-classes: 排除类中非私有成员变量检查
+# -cppcoreguidelines-owning-memory: 排除内存所有权检查
+# -cppcoreguidelines-pro-bounds-array-to-pointer-decay: 排除数组到指针退化检查
+# -cppcoreguidelines-pro-bounds-constant-array-index: 排除常量数组索引检查
+# -cppcoreguidelines-pro-bounds-pointer-arithmetic: 排除指针算术检查
+# -cppcoreguidelines-pro-type-const-cast: 排除const_cast检查
+# -cppcoreguidelines-pro-type-cstyle-cast: 排除C风格类型转换检查
+# -cppcoreguidelines-pro-type-member-init: 排除成员初始化检查
+# -cppcoreguidelines-pro-type-reinterpret-cast: 排除reinterpret_cast检查
+# -cppcoreguidelines-pro-type-union-access: 排除联合体访问检查
+# -cppcoreguidelines-pro-type-vararg: 排除可变参数检查
+# -cppcoreguidelines-special-member-functions: 排除特殊成员函数检查
+# -fuchsia-*: 排除所有Fuchsia操作系统相关检查
+# -google-build-using-namespace: 排除Google风格using namespace检查
+# -google-explicit-constructor: 排除Google风格显式构造函数检查
+# -google-global-names-in-headers: 排除头文件中全局名称检查
+# -google-readability-casting: 排除Google风格类型转换可读性检查
+# -google-readability-function-size: 排除Google风格函数大小检查
+# -google-readability-namespace-comments: 排除Google风格命名空间注释检查
+# -google-readability-todo: 排除Google风格TODO注释检查
+# -google-runtime-int: 排除Google风格整数类型检查
+# -google-runtime-references: 排除Google风格引用检查
+# -hicpp-deprecated-headers: 排除HICPP废弃头文件检查
+# -hicpp-explicit-conversions: 排除HICPP显式转换检查
+# -hicpp-function-size: 排除HICPP函数大小检查
+# -hicpp-member-init: 排除HICPP成员初始化检查
+# -hicpp-no-array-decay: 排除HICPP数组退化检查
+# -hicpp-no-assembler: 排除HICPP汇编器检查
+# -hicpp-no-malloc: 排除HICPP malloc检查
+# -hicpp-signed-bitwise: 排除HICPP有符号位运算检查
+# -hicpp-special-member-functions: 排除HICPP特殊成员函数检查
+# -hicpp-use-auto: 排除HICPP使用auto检查
+# -hicpp-use-equals-default: 排除HICPP使用default检查
+# -hicpp-use-equals-delete: 排除HICPP使用delete检查
+# -hicpp-use-override: 排除HICPP使用override检查
+# -hicpp-vararg: 排除HICPP可变参数检查
+# -llvmlibc-*: 排除所有LLVM libc相关检查
+# -llvm-header-guard: 排除LLVM头文件保护检查
+# -llvm-include-order: 排除LLVM包含顺序检查
+# -llvm-namespace-comment: 排除LLVM命名空间注释检查
+# -misc-incorrect-roundings: 排除错误舍入检查
+# -misc-macro-parentheses: 排除宏括号检查
+# -misc-non-private-member-variables-in-classes: 排除类中非私有成员变量检查
+# -misc-redundant-expression: 排除冗余表达式检查
+# -misc-unconventional-assign-operator: 排除非传统赋值操作符检查
+# -misc-unused-parameters: 排除未使用参数检查
+# -modernize-deprecated-headers: 排除废弃头文件现代化检查
+# -modernize-loop-convert: 排除循环转换现代化检查
+# -modernize-pass-by-value: 排除按值传递现代化检查
+# -modernize-raw-string-literal: 排除原始字符串字面量现代化检查
+# -modernize-return-braced-init-list: 排除返回大括号初始化列表现代化检查
+# -modernize-use-auto: 排除使用auto现代化检查
+# -modernize-use-bool-literals: 排除布尔字面量现代化检查
+# -modernize-use-default-member-init: 排除默认成员初始化现代化检查
+# -modernize-use-equals-default: 排除使用equals default现代化检查
+# -modernize-use-equals-delete: 排除使用equals delete现代化检查
+# -modernize-use-override: 排除使用override现代化检查
+# -modernize-use-trailing-return-type: 排除尾随返回类型现代化检查
+# -modernize-use-using: 排除使用using现代化检查
+# -performance-inefficient-string-concatenation: 排除低效字符串连接性能检查
+# -readability-avoid-const-params-in-decls: 排除声明中避免const参数检查
+# -readability-container-size-empty: 排除容器大小空检查
+# -readability-else-after-return: 排除return后else检查
+# -readability-function-size: 排除函数大小可读性检查
+# -readability-implicit-bool-cast: 排除隐式布尔转换检查
+# -readability-implicit-bool-conversion: 排除隐式布尔转换检查
+# -readability-inconsistent-declaration-parameter-name: 排除声明参数名不一致检查
+# -readability-named-parameter: 排除命名参数检查
+# -readability-non-const-parameter: 排除非const参数检查
+# -readability-redundant-declaration: 排除冗余声明检查
+# -readability-static-accessed-through-instance: 排除通过实例访问静态成员检查
+# -readability-static-definition-in-anonymous-namespace: 排除匿名命名空间中静态定义检查
+---
+Checks: >-
+  *,
+  -*-avoid-c-arrays,
+  -*-uppercase-literal-suffix,
+  -*-magic-numbers,
+  -altera-id-dependent-backward-branch,
+  -altera-unroll-loops,
+  -android*,
+  -bugprone-integer-division,
+  -cert-dcl50-cpp,
+  -cert-env33-c,
+  -cert-err34-c,
+  -cert-err58-cpp,
+  -cert-flp30-c,
+  -cert-msc30-c,
+  -cert-msc50-cpp,
+  -clang-analyzer-core.CallAndMessage,
+  -clang-analyzer-core.NullDereference,
+  -clang-analyzer-core.UndefinedBinaryOperatorResult,
+  -clang-analyzer-core.uninitialized.Assign,
+  -clang-analyzer-core.VLASize,
+  -clang-analyzer-cplusplus.NewDelete,
+  -clang-analyzer-cplusplus.NewDeleteLeaks,
+  -clang-analyzer-deadcode.DeadStores,
+  -clang-analyzer-optin.cplusplus.VirtualCall,
+  -clang-analyzer-optin.performance.Padding,
+  -clang-analyzer-security.FloatLoopCounter,
+  -clang-analyzer-security.insecureAPI.strcpy,
+  -clang-analyzer-unix.API,
+  -clang-analyzer-unix.cstring.BadSizeArg,
+  -clang-analyzer-unix.Malloc,
+  -clang-analyzer-unix.MallocSizeof,
+  -cppcoreguidelines-c-copy-assignment-signature,
+  -cppcoreguidelines-interfaces-global-init,
+  -cppcoreguidelines-no-malloc,
+  -cppcoreguidelines-non-private-member-variables-in-classes,
+  -cppcoreguidelines-owning-memory,
+  -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
+  -cppcoreguidelines-pro-bounds-constant-array-index,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-pro-type-const-cast,
+  -cppcoreguidelines-pro-type-cstyle-cast,
+  -cppcoreguidelines-pro-type-member-init,
+  -cppcoreguidelines-pro-type-reinterpret-cast,
+  -cppcoreguidelines-pro-type-union-access,
+  -cppcoreguidelines-pro-type-vararg,
+  -cppcoreguidelines-special-member-functions,
+  -fuchsia-*,
+  -google-build-using-namespace,
+  -google-explicit-constructor,
+  -google-global-names-in-headers,
+  -google-readability-casting,
+  -google-readability-function-size,
+  -google-readability-namespace-comments,
+  -google-readability-todo,
+  -google-runtime-int,
+  -google-runtime-references,
+  -hicpp-deprecated-headers,
+  -hicpp-explicit-conversions,
+  -hicpp-function-size,
+  -hicpp-member-init,
+  -hicpp-no-array-decay,
+  -hicpp-no-assembler,
+  -hicpp-no-malloc,
+  -hicpp-signed-bitwise,
+  -hicpp-special-member-functions,
+  -hicpp-use-auto,
+  -hicpp-use-equals-default,
+  -hicpp-use-equals-delete,
+  -hicpp-use-override,
+  -hicpp-vararg,
+  -llvmlibc-*,
+  -llvm-header-guard,
+  -llvm-include-order,
+  -llvm-namespace-comment,
+  -misc-incorrect-roundings,
+  -misc-macro-parentheses,
+  -misc-non-private-member-variables-in-classes,
+  -misc-redundant-expression,
+  -misc-unconventional-assign-operator,
+  -misc-unused-parameters,
+  -modernize-deprecated-headers,
+  -modernize-loop-convert,
+  -modernize-pass-by-value,
+  -modernize-raw-string-literal,
+  -modernize-return-braced-init-list,
+  -modernize-use-auto,
+  -modernize-use-bool-literals,
+  -modernize-use-default-member-init,
+  -modernize-use-equals-default,
+  -modernize-use-equals-delete,
+  -modernize-use-override,
+  -modernize-use-trailing-return-type,
+  -modernize-use-using,
+  -modernize-use-trailing-return-type,
+  -performance-inefficient-string-concatenation,
+  -readability-avoid-const-params-in-decls,
+  -readability-container-size-empty,
+  -readability-else-after-return,
+  -readability-function-size,
+  -readability-implicit-bool-cast,
+  -readability-implicit-bool-conversion,
+  -readability-inconsistent-declaration-parameter-name,
+  -readability-named-parameter,
+  -readability-non-const-parameter,
+  -readability-redundant-declaration,
+  -readability-static-accessed-through-instance,
+  -readability-static-definition-in-anonymous-namespace
+
+# 警告作为错误配置
+WarningsAsErrors: ''                    # 不将警告视为错误（空字符串表示禁用）
+
+# 头文件过滤规则
+HeaderFilterRegex: '.*'                 # 匹配所有头文件进行检查
+
+# 检查选项配置
+CheckOptions:
+  # 函数大小相关配置
+  - key: readability-function-size.BranchThreshold     # 函数分支数阈值
+    value: '600'
+  - key: readability-function-size.LineThreshold       # 函数行数阈值
+    value: '4000'
+  - key: readability-function-size.StatementThreshold  # 函数语句数阈值
+    value: '4000'
+  - key: readability-function-cognitive-complexity.Threshold # 函数认知复杂度阈值
+    value: '40'
+    
+  # 命名规范配置
+  - key: readability-identifier-length.MinimumParameterNameLength   # 参数名最小长度
+    value: '0'                                                      # 不限制参数名最小长度
+  - key: readability-identifier-length.MinimumLoopCounterNameLength # 循环计数器名最小长度
+    value: '0'                                                      # 不限制循环计数器名最小长度
+  - key: readability-identifier-naming.NamespaceCase   # 命名空间命名规范
+    value: CamelCase
+  - key: readability-identifier-naming.ClassCase       # 类命名规范
+    value: CamelCase
+  - key: readability-identifier-naming.StructCase      # 结构体命名规范
+    value: CamelCase
+  - key: readability-identifier-naming.UnionCase       # 联合体命名规范
+    value: CamelCase
+  - key: readability-identifier-naming.EnumCase        # 枚举命名规范
+    value: CamelCase
+  - key: readability-identifier-naming.EnumConstantCase # 枚举常量命名规范
+    value: UPPER_CASE
+  - key: readability-identifier-naming.MacroDefinitionCase # 宏定义命名规范
+    value: UPPER_CASE
+  - key: readability-identifier-naming.GlobalConstantCase # 全局常量命名规范
+    value: UPPER_CASE
+  - key: readability-identifier-naming.GlobalVariableCase # 全局变量命名规范
+    value: camelBack
+  - key: readability-identifier-naming.GlobalVariablePrefix # 全局变量前缀
+    value: 'g_'
+  - key: readability-identifier-naming.StaticVariableCase # 静态变量命名规范
+    value: camelBack
+  - key: readability-identifier-naming.MemberCase        # 成员变量命名规范
+    value: camelBack
+  - key: readability-identifier-naming.MemberPrefix      # 成员变量前缀
+    value: 'm_'
+  - key: readability-identifier-naming.ClassMemberCase   # 类成员变量命名规范
+    value: camelBack
+  - key: readability-identifier-naming.ClassMemberPrefix # 类成员变量前缀
+    value: 'M_'
+  - key: readability-identifier-naming.PrivateMemberCase # 私有成员变量命名规范
+    value: camelBack
+  - key: readability-identifier-naming.PrivateMemberPrefix # 私有成员变量前缀
+    value: 'm_'
+  - key: readability-identifier-naming.ProtectedMemberCase # 保护成员变量命名规范
+    value: camelBack
+  - key: readability-identifier-naming.ProtectedMemberPrefix # 保护成员变量前缀
+    value: 'm_'
+  - key: readability-identifier-naming.PublicMemberCase  # 公有成员变量命名规范
+    value: camelBack
+  - key: readability-identifier-naming.FunctionCase       # 函数命名规范
+    value: camelBack
+  - key: readability-identifier-naming.ParameterCase     # 参数命名规范
+    value: camelBack
+  - key: readability-identifier-naming.VariableCase      # 变量命名规范
+    value: camelBack
+  - key: readability-identifier-naming.ConstantCase      # 常量命名规范
+    value: UPPER_CASE
+  - key: readability-identifier-naming.TypeAliasCase     # 类型别名命名规范
+    value: CamelCase
+  - key: readability-identifier-naming.LocalPointerCase  # 局部指针命名规范
+    value: CamelCase
+  - key: readability-identifier-naming.LocalPointerPrefix # 局部指针前缀
+    value: 'p'
+  - key: readability-identifier-naming.GlobalPointerCase # 全局指针命名规范
+    value: CamelCase
+  - key: readability-identifier-naming.GlobalPointerPrefix # 全局指针前缀
+    value: 'p'

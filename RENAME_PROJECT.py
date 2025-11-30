@@ -22,17 +22,17 @@ class ProjectRenamer:
         self.new_name = None
         
     def get_old_project_name(self):
-        """从eide.json读取原工程名"""
-        eide_json_path = self.project_root / ".eide" / "eide.json"
-        if not eide_json_path.exists():
-            raise FileNotFoundError(f"未找到eide.json文件: {eide_json_path}")
+        """从eide.yml读取原工程名"""
+        eide_yml_path = self.project_root / ".eide" / "eide.yml"
+        if not eide_yml_path.exists():
+            raise FileNotFoundError(f"未找到eide.yml文件: {eide_yml_path}")
         
-        with open(eide_json_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        with open(eide_yml_path, 'r', encoding='utf-8') as f:
+            data = yaml.safe_load(f)
         
         self.old_name = data.get("name")
         if not self.old_name:
-            raise ValueError("eide.json中未找到name字段")
+            raise ValueError("eide.yml中未找到name字段")
         
         print(f"检测到原工程名: {self.old_name}")
         return self.old_name
@@ -121,12 +121,19 @@ class ProjectRenamer:
         
         validation_errors = []
         
-        # 验证eide.json
+        # 验证eide.yml
         try:
-            self._validate_eide_json()
-            print("✓ eide.json验证通过")
+            self._validate_eide_yml()
+            print("✓ eide.yml验证通过")
         except ValueError as e:
-            validation_errors.append(f"eide.json: {str(e)}")
+            validation_errors.append(f"eide.yml: {str(e)}")
+        
+        # 验证CMakeLists.txt
+        try:
+            self._validate_cmake()
+            print("✓ CMakeLists.txt验证通过")
+        except ValueError as e:
+            validation_errors.append(f"CMakeLists.txt: {str(e)}")
         
         # 验证env.ini
         try:
@@ -155,16 +162,36 @@ class ProjectRenamer:
         
         print("✓ 所有文件中的原工程名验证通过")
     
-    def _validate_eide_json(self):
-        """验证eide.json文件中的原工程名"""
-        eide_json_path = self.project_root / ".eide" / "eide.json"
+    def _validate_eide_yml(self):
+        """验证eide.yml文件中的原工程名"""
+        eide_yml_path = self.project_root / ".eide" / "eide.yml"
         
-        with open(eide_json_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        with open(eide_yml_path, 'r', encoding='utf-8') as f:
+            data = yaml.safe_load(f)
         
         # 检查name字段
         if data.get("name") != self.old_name:
             raise ValueError(f"name字段不匹配，预期:{self.old_name}，实际:{data.get('name')}")
+        
+        # 检查targets下是否有对应的目标名
+        if "targets" in data:
+            targets = data["targets"]
+            if self.old_name not in targets:
+                raise ValueError(f"targets中未找到{self.old_name}")
+    
+    def _validate_cmake(self):
+        """验证CMakeLists.txt文件中的原工程名"""
+        cmake_path = self.project_root / "CMakeLists.txt"
+        if not cmake_path.exists():
+            return
+        
+        with open(cmake_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # 检查CMAKE_PROJECT_NAME
+        old_cmake_project_name = f"set(CMAKE_PROJECT_NAME {self.old_name})"
+        if old_cmake_project_name not in content:
+            raise ValueError(f"CMAKE_PROJECT_NAME不匹配，预期:{old_cmake_project_name}")
     
     def _validate_env_ini(self):
         """验证env.ini文件中的原工程名"""
@@ -224,59 +251,72 @@ class ProjectRenamer:
         """修改相关文件内容"""
         print("\n=== 开始修改文件内容 ===")
         
-        # 3.1 修改eide.json
-        self._modify_eide_json()
+        # 3.1 修改eide.yml
+        self._modify_eide_yml()
         
-        # 3.2 修改env.ini
+        # 3.2 修改CMakeLists.txt
+        self._modify_cmake()
+        
+        # 3.3 修改env.ini
         self._modify_env_ini()
         
-        # 3.3 修改files.options.yml
+        # 3.4 修改files.options.yml
         self._modify_files_options_yml()
         
-        # 3.4 修改.ioc文件
+        # 3.5 修改.ioc文件
         self._modify_ioc_file()
         
-        # 3.5 修改flash.cfg文件
+        # 3.6 修改flash.cfg文件
         self._modify_flash_cfg()
     
-    def _modify_eide_json(self):
-        """修改eide.json文件"""
-        eide_json_path = self.project_root / ".eide" / "eide.json"
+    def _modify_eide_yml(self):
+        """修改eide.yml文件"""
+        eide_yml_path = self.project_root / ".eide" / "eide.yml"
         
-        with open(eide_json_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        # 直接读取文件内容进行字符串替换，避免yaml.dump破坏格式
+        with open(eide_yml_path, 'r', encoding='utf-8') as f:
+            content = f.read()
         
-        # 修改name字段
-        data["name"] = self.new_name
+        # 1. 修改name字段（第二行）
+        old_name_line = f"name: {self.old_name}"
+        new_name_line = f"name: {self.new_name}"
+        content = content.replace(old_name_line, new_name_line)
         
-        # 修改targets下的第一个对象名
-        if "targets" in data:
-            targets = data["targets"]
-            if self.old_name in targets:
-                targets[self.new_name] = targets.pop(self.old_name)
-            else:
-                # 如果没有找到确切匹配，找第一个目标
-                first_target_name = next(iter(targets.keys()), None)
-                if first_target_name and first_target_name != self.new_name:
-                    targets[self.new_name] = targets.pop(first_target_name)
+        # 2. 修改targets下的目标名
+        # 匹配模式：targets: 后面紧跟的目标名（带有正确的缩进）
+        old_target_pattern = f"targets:\n  {self.old_name}:"
+        new_target_pattern = f"targets:\n  {self.new_name}:"
+        content = content.replace(old_target_pattern, new_target_pattern)
         
-        # 修改incList中的RTE路径
-        if "targets" in data and self.new_name in data["targets"]:
-            target_config = data["targets"][self.new_name]
-            if "custom_dep" in target_config and "incList" in target_config["custom_dep"]:
-                inc_list = target_config["custom_dep"]["incList"]
-                old_rte_path = f"CubeMX_BSP/MDK-ARM/RTE/_{self.old_name}"
-                new_rte_path = f"CubeMX_BSP/MDK-ARM/RTE/_{self.new_name}"
-                
-                for i, inc_path in enumerate(inc_list):
-                    if inc_path == old_rte_path:
-                        inc_list[i] = new_rte_path
-                        break
+        # 3. 修改incList中的RTE路径
+        old_rte_path = f"CubeMX_BSP/MDK-ARM/RTE/_{self.old_name}"
+        new_rte_path = f"CubeMX_BSP/MDK-ARM/RTE/_{self.new_name}"
+        content = content.replace(old_rte_path, new_rte_path)
         
-        with open(eide_json_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        with open(eide_yml_path, 'w', encoding='utf-8') as f:
+            f.write(content)
         
-        print("✓ 修改eide.json完成")
+        print("✓ 修改eide.yml完成")
+    
+    def _modify_cmake(self):
+        """修改CMakeLists.txt文件"""
+        cmake_path = self.project_root / "CMakeLists.txt"
+        if not cmake_path.exists():
+            return
+        
+        with open(cmake_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # 修改CMAKE_PROJECT_NAME
+        old_cmake_project_name = f"set(CMAKE_PROJECT_NAME {self.old_name})"
+        new_cmake_project_name = f"set(CMAKE_PROJECT_NAME {self.new_name})"
+        
+        content = content.replace(old_cmake_project_name, new_cmake_project_name)
+        
+        with open(cmake_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        
+        print("✓ 修改CMakeLists.txt完成")
     
     def _modify_env_ini(self):
         """修改env.ini文件"""
@@ -308,21 +348,20 @@ class ProjectRenamer:
         if not options_yml_path.exists():
             return
         
+        # 直接读取文件内容进行字符串替换，避免yaml.dump破坏注释和格式
         with open(options_yml_path, 'r', encoding='utf-8') as f:
-            data = yaml.safe_load(f)
+            content = f.read()
         
-        if "options" in data:
-            options = data["options"]
-            if self.old_name in options:
-                options[self.new_name] = options.pop(self.old_name)
-            else:
-                # 如果没有找到确切匹配，找第一个选项
-                first_option_name = next(iter(options.keys()), None)
-                if first_option_name and first_option_name == self.old_name:
-                    options[self.new_name] = options.pop(first_option_name)
+        # 使用正则表达式匹配并替换options下的目标名
+        # 匹配模式：options: 后面的目标名（带有正确的缩进）
+        old_pattern = f"options:\n    {self.old_name}:"
+        new_pattern = f"options:\n    {self.new_name}:"
+        
+        if old_pattern in content:
+            content = content.replace(old_pattern, new_pattern)
         
         with open(options_yml_path, 'w', encoding='utf-8') as f:
-            yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+            f.write(content)
         
         print("✓ 修改files.options.yml完成")
     
@@ -411,6 +450,13 @@ class ProjectRenamer:
         except Exception as e:
             print(f"\n❌ 重命名过程中出现错误: {str(e)}")
             raise
+        finally:
+            # 等待用户按键后退出
+            print("\n按任意键退出...")
+            try:
+                input()
+            except (KeyboardInterrupt, EOFError):
+                pass
 
 def main():
     """主函数"""
