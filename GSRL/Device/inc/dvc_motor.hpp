@@ -47,7 +47,7 @@ protected:
     int16_t m_roundCount;              // 整圈数，用于计算小数圈数
     fp32 m_zeroAngle;                  // 零位角度，用于计算小数圈数
     fp32 m_currentRevolutions;         // 小数圈数 n*2pi(rad)
-    int16_t m_currentTorqueCurrent;    // 转矩电流，非转矩
+    int16_t m_currentTorqueCurrent;
     int8_t m_temperature;              // ℃
     uint8_t m_motorFeedbackErrorCount;
     bool m_isMotorConnected;
@@ -56,7 +56,6 @@ protected:
     fp32 m_targetAngularVelocity;      // rad/s
     fp32 m_targetRevolutions;          // 圈n*2pi(rad)
     int16_t m_targetTorqueCurrent;
-
     // 控制器
     Controller *m_controller;          // 符合 Controller 接口的控制器
     fp32 m_controllerOutput;
@@ -66,9 +65,9 @@ protected:
 public:
     virtual ~Motor() = default;
     // 通信相关
-    uint32_t getMotorControlMessageID() const;
-    uint32_t getMotorFeedbackMessageID() const;
-    const CAN_TxHeaderTypeDef *getMotorControlHeader() const;
+    uint32_t getMotorControlMessageID() const; // 发给电机的控制报文 ID
+    uint32_t getMotorFeedbackMessageID() const; // 电机回复的反馈报文 ID
+    const CAN_TxHeaderTypeDef *getMotorControlHeader() const; 
     const uint8_t *getMotorControlData();
     bool decodeCanRxMessageFromQueue(const can_rx_message_t *rxMessage, uint8_t Size);
     bool decodeCanRxMessageFromISR(const can_rx_message_t *rxMessage);
