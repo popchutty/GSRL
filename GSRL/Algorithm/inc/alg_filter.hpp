@@ -210,7 +210,7 @@ private:
     GainMatrix m_gain;
     StateMatrix m_identityMatrix; // 单位矩阵预定义，避免重复构造
 
-    // 动态测量调整相关（多传感器融合支持）
+    // 动态测量调整相关
     bool m_useAutoAdjustment;                    // 启用自动调整
     int m_validMeasurementCount;                 // 有效测量数量
     std::array<int, MeasSize> m_measurementMap;  // 测量与状态的映射关系
@@ -220,7 +220,7 @@ private:
     // 过度收敛保护
     StateVector m_stateMinVariance; // 状态最小方差保护
 
-    // 数值稳定性相关（针对STM32F4单精度FPU优化）
+    // 数值稳定性相关
     static constexpr T EPSILON = static_cast<T>(1e-6f); // 单精度浮点适配的数值稳定性阈值
 
 public:
@@ -271,7 +271,7 @@ public:
      */
     inline void update(const MeasVector &measurement)
     {
-        // 扩展点：预处理回调（用于EKF等高级滤波器）
+        // 扩展点：预处理回调
         onPreUpdate(measurement);
 
         // 预测步骤
@@ -295,7 +295,7 @@ public:
         // 过度收敛保护
         applyConvergenceProtection();
 
-        // 扩展点：后处理回调（用于EKF等高级滤波器）
+        // 扩展点：后处理回调
         onPostUpdate();
     }
 
@@ -309,7 +309,7 @@ public:
         // 扩展点：预处理回调
         onPreUpdate(measurement);
 
-        // 预测步骤（包含控制输入）
+        // 预测步骤
         predict(control);
 
         // 动态调整矩阵（如果启用）
@@ -505,7 +505,7 @@ public:
     }
 
     /**
-     * @brief 获取预测状态（类似C版本的xhatminus）
+     * @brief 获取预测状态
      */
     const StateVector &getPredictedState() const
     {
@@ -513,7 +513,7 @@ public:
     }
 
     /**
-     * @brief 获取预测协方差（类似C版本的Pminus）
+     * @brief 获取预测协方差
      */
     const StateMatrix &getPredictedCovariance() const
     {
@@ -521,7 +521,7 @@ public:
     }
 
 protected:
-    // === 扩展点：为高级滤波器（EKF/UKF等）预留的虚函数接口 ===
+    // 扩展点：为高级滤波器（EKF/UKF等）预留的虚函数接口
 
     /**
      * @brief 预更新回调（扩展点）
@@ -721,7 +721,7 @@ private:
             // 状态更新 x = x- + K * innovation
             m_state = m_statePred + m_gain * innovation;
 
-            // 协方差更新 P = (I - K * H) * P- (Joseph形式保证正定性)
+            // 协方差更新 P = (I - K * H) * P- (Joseph形式)
             StateMatrix IKH = m_identityMatrix - m_gain * m_observation;
             m_covariance    = IKH * m_covPred * IKH.transpose() +
                            m_gain * m_measNoise * m_gain.transpose();

@@ -142,10 +142,13 @@ static void can_all_pass_filter_init(CAN_HandleTypeDef *hcan)
  *        HAL library CAN interrupt callback function
  * @param hcan CAN句柄
  * @retval None
+ * @note 这里其实有两层回调，第一层是HAL_CAN_RxFifo0MsgPendingCallback，语法是HAL库规定的，在CAN收到数据后会自动调用
+ *       第二层是手动注册的回调函数rxCallbackFunction，在CAN_Init中
  */
+
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 {
-    can_rx_message_t s_rx_msg;
+    can_rx_message_t s_rx_msg;//定义接受消息的结构体
     if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &s_rx_msg.header, s_rx_msg.data) == HAL_OK) {
 
         // 1. 使用队列保存接收数据（保持原有功能）

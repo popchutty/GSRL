@@ -20,8 +20,8 @@
 // PID
 SimplePID::PIDParam param = {
     10.0f,  // Kp
-    0.0f,  // Ki
-    500.0f,   // Kd
+    0.0f,   // Ki
+    500.0f, // Kd
     10.0f,  // outputLimit
     0.0f    // intergralLimit
 };
@@ -34,9 +34,9 @@ Dr16RemoteControl dr16;
 using Vector3f = GSRLMath::Vector3f;
 Mahony ahrs{};
 BMI088::CalibrationInfo cali = {
-    {0.0f, 0.0f, 0.0f}, // gyroOffset
-    {0.0f, 0.0f, 0.0f}, // accelOffset
-    {0.0f, 0.0f, 0.0f},  // magnetOffset
+    {0.0f, 0.0f, 0.0f},                         // gyroOffset
+    {0.0f, 0.0f, 0.0f},                         // accelOffset
+    {0.0f, 0.0f, 0.0f},                         // magnetOffset
     {GSRLMath::Matrix33f::MatrixType::IDENTITY} // installSpinMatrix
 };
 BMI088 imu(&ahrs, {&hspi1, GPIOA, GPIO_PIN_4}, {&hspi1, GPIOB, GPIO_PIN_0}, cali);
@@ -57,22 +57,19 @@ inline void transmitMotorsControlData();
  */
 extern "C" void test_task(void *argument)
 {
-    CAN_Init(&hcan1, can1RxCallback); // 初始化CAN1
+    CAN_Init(&hcan1, can1RxCallback);       // 初始化CAN1
     UART_Init(&huart3, dr16ITCallback, 36); // 初始化DR16串口
     uint16_t count = 0;
-    fp32 angle = 0.0f;
-    while (imu.init() == false)
-    {
+    fp32 angle     = 0.0f;
+    while (imu.init() == false) {
         osDelay(100);
     } // 初始化IMU
     TickType_t taskLastWakeTime = xTaskGetTickCount(); // 获取任务开始时间
-    while(1)
-    {
+    while (1) {
         eulerAngle = imu.solveAttitude(); // 解算姿态
-        eulerAngle = eulerAngle * 57.3f; // 弧度转角度
-        count ++;
-        if (count>1000)
-        {
+        eulerAngle = eulerAngle * 57.3f;  // 弧度转角度
+        count++;
+        if (count > 1000) {
             angle = GSRLMath::normalizeAngle(MATH_PI * 2 / 3 + angle);
             count = 0;
         }
@@ -93,7 +90,6 @@ extern "C" void dr16ITCallback(uint8_t *Buffer, uint16_t Length)
     dr16.receiveRxDataFromISR(Buffer);
 }
 
-
 extern "C" void can1RxCallback(can_rx_message_t *pRxMsg)
 {
     motor.decodeCanRxMessageFromISR(pRxMsg);
@@ -104,7 +100,7 @@ extern "C" void can1RxCallback(can_rx_message_t *pRxMsg)
  */
 inline void transmitMotorsControlData()
 {
-    const uint8_t* data = motor.getMotorControlData();
+    const uint8_t *data = motor.getMotorControlData();
     uint32_t send_mail_box;
     HAL_CAN_AddTxMessage(&hcan1, motor.getMotorControlHeader(), data, &send_mail_box);
 }
