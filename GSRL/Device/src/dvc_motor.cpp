@@ -699,48 +699,40 @@ void MotorDM4310::setMotorZeroPosition()
 }
 
 /******************************************************************************
- *                           MG系列电机类实现
+ *                           瓴控MG系列电机类实现
  ******************************************************************************/
 
 /**
- * @brief MG系列电机类构造函数, 用于初始化MG系列电机参数，自动调用
- * @param motorID MG电机ID (控制ID和反馈ID相同)
- * @param controller 绑定的控制器，如PID
+ * @brief 瓴控MG系列电机类构造函数, 用于初始化电机参数
+ * @param lkMotorID 瓴控电机ID (控制ID和反馈ID相同)
+ * @param controller 绑定的控制器
  * @param encoderOffset 编码器偏移量，默认为0
- * @param encoderResolution 编码器分辨率，直接取得最大值65535以兼容不同分辨率型号
- * @note motorID范围为1-32，对应反馈ID和控制ID均为0x140 + motorID，Ox140为MG系列电机CAN ID基地址
+ * @param gearboxRatio 电机减速比倒数，用于换算电机转速、角速度和圈数，
+ *                     电机角度不受此值影响，默认为1即不换算
+ * @note lkMotorID范围为1-32，对应反馈ID和控制ID均为0x140 + lkMotorID，Ox140为MG系列电机CAN ID基地址
  */
-MotorMG8016EI6::MotorMG8016EI6(uint8_t mgmotorID,
-                               Controller *controller,
-                               uint16_t encoderOffset)
-    : Motor(0x140u + mgmotorID,
-            0x140u + mgmotorID,
+MotorLKMG::MotorLKMG(uint8_t lkMotorID, Controller *controller, uint16_t encoderOffset, uint8_t gearboxRatio)
+    : Motor(0x140u + lkMotorID,
+            0x140u + lkMotorID,
             controller,
             encoderOffset),
-      m_openloopLimit(2048.0f),
-      m_motorID(mgmotorID),
-      m_encoderResolution(65535),
-      m_iqRaw(0),
       m_speedDegreePerSecond(0),
+      m_lkMotorID(lkMotorID),
       m_encoderRaw(0),
-      m_gearboxRatio(6)
-{
-}
+      m_gearboxRatio(gearboxRatio) {}
 
 /**
  * @brief 解析MG电机反馈数据核心函数
  * @param rxMessage CAN接收消息，是结构体
  * @return true ID匹配，解析成功
  * @return false ID不匹配，解析失败
+ * @note 内部函数, 被decodeCanRxMessageFromQueue或decodeCanRxMessageFromISR调用
  * @note 目前只解析0x9C命令，其他命令可根据需要添加
  *       0x9C命令数据格式参考MG系列电机协议文档，为：温度、扭矩电流、速度、原始编码器
  */
-bool MotorMG8016EI6::decodeCanRxMessage(const can_rx_message_t &rxMessage)
+bool MotorLKMG::decodeCanRxMessage(const can_rx_message_t &rxMessage)
 {
-    // 看看ID是否是MG电机
-    if (rxMessage.header.StdId != m_motorFeedbackMessageID) {
-        return false;
-    }
+    if (rxMessage.header.StdId != m_motorFeedbackMessageID) return false;
 
     uint8_t cmd = rxMessage.data[0];
 
@@ -775,14 +767,10 @@ bool MotorMG8016EI6::decodeCanRxMessage(const can_rx_message_t &rxMessage)
 /**
  * @brief 将控制器输出转换为MG系列电机CAN控制数据
  */
-void MotorMG8016EI6::convertControllerOutputToMotorControlData()
+void MotorLKMG::convertControllerOutputToMotorControlData()
 {
-    int16_t iqControl = (int16_t)m_controllerOutput; // 控制量范围 -2048~2048 对应协议
-    if (iqControl > 2048) {
-        iqControl = 2048;
-    } else if (iqControl < -2048) {
-        iqControl = -2048;
-    }
+    int16_t iqControl = (int16_t)m_controllerOutput;
+    GSRLMath::constrain(iqControl, m_openloopLimit); // 控制量范围 -2048~2048 对应协议
 
     m_motorControlData[0] = 0xA1; // 命令字节：转矩闭环
     m_motorControlData[1] = 0x00;
@@ -798,7 +786,7 @@ void MotorMG8016EI6::convertControllerOutputToMotorControlData()
  * @brief 将角速度闭环控制输出值转换为MG电机CAN控制数据
  * @note 正反转由符号决定
  */
-void MotorMG8016EI6::hardwareConvertAngularVelocityToMotorContorlData()
+void MotorLKMG::hardwareAngularVelocityClosedloopControl()
 {
     float targetSpeedDps  = m_targetAngularVelocity;
     int32_t speedControl  = (int32_t)(targetSpeedDps * 100.0f * m_gearboxRatio * (180.0f / MATH_PI)); // 转换为电机轴速度，单位0.01度每秒
@@ -818,17 +806,17 @@ void MotorMG8016EI6::hardwareConvertAngularVelocityToMotorContorlData()
  * @param AngleVelocity 目标角速度，单位rad/s
  * @note 正反转由符号决定
  */
-void MotorMG8016EI6::hardwareConvertAngularVelocityToMotorContorlData(fp32 AngleVelocity)
+void MotorLKMG::hardwareAngularVelocityClosedloopControl(fp32 targetAngularVelocity)
 {
-    m_targetAngularVelocity = AngleVelocity;
-    return hardwareConvertAngularVelocityToMotorContorlData();
+    m_targetAngularVelocity = targetAngularVelocity;
+    hardwareAngularVelocityClosedloopControl();
 }
 
 /**
  * @brief 将单圈角度闭环控制输出值转换为MG电机CAN控制数据
- * @note 顺逆转由ClockwiseOrNot决定，true表示顺时针，false表示逆时针
+ * @note 顺逆转由isMotorClockwise决定，true表示顺时针，false表示逆时针
  */
-void MotorMG8016EI6::hardwareConvertSingleCircleAngleToMotorControlData()
+void MotorLKMG::hardwareAngleClosedloopControl()
 {
     float targetAngleDps       = m_targetAngle;
     int32_t targetAngleControl = (int32_t)(targetAngleDps * 100.0f * m_gearboxRatio * (180.0f / MATH_PI)); // 转换为电机轴速度，单位0.01度每秒
@@ -837,7 +825,7 @@ void MotorMG8016EI6::hardwareConvertSingleCircleAngleToMotorControlData()
     int32_t maxVelocityControl = (int32_t)(maxVelocityDps * m_gearboxRatio * (180.0f / MATH_PI)); // 转换为电机轴速度，单位0.01度每秒
     uint8_t *q                 = (uint8_t *)&maxVelocityControl;
     m_motorControlData[0]      = 0xA6;
-    m_motorControlData[1]      = m_ClockwiseOrNot;
+    m_motorControlData[1]      = m_isMotorClockwise;
     m_motorControlData[2]      = q[0];
     m_motorControlData[3]      = q[1];
     m_motorControlData[4]      = p[0];
@@ -850,16 +838,16 @@ void MotorMG8016EI6::hardwareConvertSingleCircleAngleToMotorControlData()
  * @brief 将单圈角度闭环控制输出值转换为MG电机CAN控制数据
  * @param targetAngle 目标角度，单位rad [0, 2PI)
  * @param maxVelocity 最大允许角速度，单位rad/s
- * @param ClockwiseOrNot 是否顺时针旋转到目标角度，true表示顺时针，false表示逆时针
+ * @param isMotorClockwise 是否顺时针旋转到目标角度，true表示顺时针，false表示逆时针
  * @note 是由电机内置的PID控制器进行闭环控制
  */
 
-void MotorMG8016EI6::hardwareConvertSingleCircleAngleToMotorControlData(fp32 targetAngle, fp32 maxVelocity, bool ClockwiseOrNot)
+void MotorLKMG::hardwareAngleClosedloopControl(fp32 targetAngle, fp32 maxVelocity, bool isMotorClockwise)
 {
-    m_targetAngle    = targetAngle;
-    m_maxVelocity    = maxVelocity;
-    m_ClockwiseOrNot = !ClockwiseOrNot;
-    return hardwareConvertSingleCircleAngleToMotorControlData();
+    m_targetAngle      = targetAngle;
+    m_maxVelocity      = maxVelocity;
+    m_isMotorClockwise = !isMotorClockwise;
+    hardwareAngleClosedloopControl();
 }
 
 /**
@@ -868,7 +856,7 @@ void MotorMG8016EI6::hardwareConvertSingleCircleAngleToMotorControlData(fp32 tar
  * @param maxVelocity 最大允许角速度，单位rad/s
  * @note 由点击内部自带的PID控制器完成控制
  */
-void MotorMG8016EI6::hardwareConvertMutipleCircleAngleToMotorControlData()
+void MotorLKMG::hardwareCascadeAngleClosedloopControl()
 {
     float targetAngleDps       = m_targetAngle;
     int32_t targetAngleControl = (int32_t)(targetAngleDps * 100.0f * m_gearboxRatio * (180.0f / MATH_PI)); // 转换为电机轴速度，单位0.01度每秒
@@ -892,9 +880,9 @@ void MotorMG8016EI6::hardwareConvertMutipleCircleAngleToMotorControlData()
  * @param maxVelocity 最大允许角速度，单位rad/s
  * @note 由点击内部自带的PID控制器完成控制
  */
-void MotorMG8016EI6::hardwareConvertMutipleCircleAngleToMotorControlData(fp32 targetAngle, fp32 maxVelocity)
+void MotorLKMG::hardwareCascadeAngleClosedloopControl(fp32 targetAngle, fp32 maxVelocity)
 {
     m_targetAngle = targetAngle;
     m_maxVelocity = maxVelocity;
-    return hardwareConvertMutipleCircleAngleToMotorControlData();
+    hardwareCascadeAngleClosedloopControl();
 }

@@ -121,10 +121,12 @@ protected:
 
 public:
     MotorGM6020(uint8_t dji6020MotorID, Controller *controller, uint16_t encoderOffset = 0);
-    void convertControllerOutputToMotorControlData() override;
-    bool decodeCanRxMessage(const can_rx_message_t &rxMessage) override;
     uint8_t getDjiMotorID() const;
     MotorGM6020 operator+(const MotorGM6020 &otherMotor) const;
+
+protected:
+    bool decodeCanRxMessage(const can_rx_message_t &rxMessage) override;
+    void convertControllerOutputToMotorControlData() override;
 };
 
 /**
@@ -138,6 +140,8 @@ protected:
 
 public:
     MotorM3508(uint8_t dji3508MotorID, Controller *controller, uint16_t encoderOffset = 0, uint8_t gearboxRatio = 1);
+
+protected:
     bool decodeCanRxMessage(const can_rx_message_t &rxMessage) override;
 };
 
@@ -174,50 +178,42 @@ protected:
 
 public:
     MotorDM4310(uint8_t dmControlID, uint8_t dmMasterID, fp32 pmax, fp32 vmax, fp32 tmax, Controller *controller);
-    void convertControllerOutputToMotorControlData() override;
-    bool decodeCanRxMessage(const can_rx_message_t &rxMessage) override;
     void setMotorZeroPosition();
+
+protected:
+    bool decodeCanRxMessage(const can_rx_message_t &rxMessage) override;
+    void convertControllerOutputToMotorControlData() override;
 };
 
 /**
- * @brief MG系列电机类
- * @details 该类实现了Motor类的纯虚函数，用于控制MG系列电机
- * @param motorID MG电机ID (控制ID和反馈ID相同)
- * @param controller 绑定的控制器，如PID
- * @param encoderOffset 编码器偏移量，默认为0
- * @param encoderResolution 编码器分辨率(直接取最高65535，这样可兼容低分辨率型号) 本测试代码使用的电机型号为Motor MG8016EI6
- * @param m_speedDegreePerSecond 电机速度，单位度每秒
- * @param m_encoderRaw 电机原始编码器值
+ * @brief 瓴控MG系列电机类
+ * @details 该类实现了Motor类的纯虚函数，用于控制瓴控MG系列电机
  */
-
-class MotorMG8016EI6 : public Motor
+class MotorLKMG : public Motor
 {
-public:
-    MotorMG8016EI6(uint8_t motorID,
-                   Controller *controller,
-                   uint16_t encoderOffset = 0);
-
-    void convertControllerOutputToMotorControlData() override;
-    bool decodeCanRxMessage(const can_rx_message_t &rxMessage) override;
-    void hardwareConvertAngularVelocityToMotorContorlData(); // 角速度闭环控制
-    void hardwareConvertAngularVelocityToMotorContorlData(fp32 AngleVelocity);
-    void hardwareConvertSingleCircleAngleToMotorControlData(); // 单圈角度闭环控制
-    void hardwareConvertSingleCircleAngleToMotorControlData(fp32 targetAngle, fp32 maxVelocity, bool ClockwiseOrNot);
-    void hardwareConvertMutipleCircleAngleToMotorControlData(); // 多圈角度闭环控制
-    void hardwareConvertMutipleCircleAngleToMotorControlData(fp32 targetAngle, fp32 maxVelocity);
-
-    uint8_t getMotorID() const { return m_motorID; }
-
-private:
+protected:
     int16_t m_speedDegreePerSecond;
-    int16_t m_iqRaw;
-    uint8_t m_motorID;
-    uint16_t m_encoderResolution;
-    uint16_t m_openloopLimit;
+    uint8_t m_lkMotorID;
+    static constexpr uint16_t m_encoderResolution = 65535;
+    static constexpr int16_t m_openloopLimit      = 2048;
     uint16_t m_encoderRaw;
-    uint8_t m_gearboxRatio; // 减速比，是一个大于1的整数
-    fp32 m_maxVelocity;     // 最大速度，单位rad/s
-    bool m_ClockwiseOrNot;  // 是否顺时针旋转
+    uint8_t m_gearboxRatio;  // 减速比，是一个大于1的整数
+    fp32 m_maxVelocity;      // 最大速度，单位rad/s
+    bool m_isMotorClockwise; // 是否顺时针旋转
+
+public:
+    MotorLKMG(uint8_t lkMotorID, Controller *controller, uint16_t encoderOffset = 0, uint8_t gearboxRatio = 1);
+    void hardwareAngularVelocityClosedloopControl();
+    void hardwareAngularVelocityClosedloopControl(fp32 targetAngularVelocity);
+    void hardwareAngleClosedloopControl();
+    void hardwareAngleClosedloopControl(fp32 targetAngle, fp32 maxVelocity, bool isMotorClockwise);
+    void hardwareCascadeAngleClosedloopControl();
+    void hardwareCascadeAngleClosedloopControl(fp32 targetAngle, fp32 maxVelocity);
+    uint8_t getMotorID() const { return m_lkMotorID; }
+
+protected:
+    bool decodeCanRxMessage(const can_rx_message_t &rxMessage) override;
+    void convertControllerOutputToMotorControlData() override;
 };
 
 /* Exported constants --------------------------------------------------------*/
