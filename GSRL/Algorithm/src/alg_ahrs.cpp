@@ -48,111 +48,6 @@ void AHRS::reset()
 }
 
 /**
- * @brief 初始化AHRS姿态解算, 根据加速度计和磁力计数据初始化四元数
- * @param accel 加速度计数据
- * @param magnet 磁力计数据
- */
-void AHRS::init(const Vector3f &accel, const Vector3f &magnet)
-{
-    // 存储传入的加速度和磁力计数据
-    m_accel  = accel;
-    m_magnet = magnet;
-
-    // 本地变量
-    fp32 R[9]; // 3x3旋转矩阵
-    fp32 norm, fmodx, fmody;
-
-    // 将未归一化的重力和地磁向量放入旋转矩阵的z轴和x轴
-    R[2] = accel.x;
-    R[5] = accel.y;
-    R[8] = accel.z;
-    R[0] = magnet.x;
-    R[3] = magnet.y;
-    R[6] = magnet.z;
-
-    // 设置y向量为z和x向量的叉乘
-    R[1] = R[5] * R[6] - R[8] * R[3];
-    R[4] = R[8] * R[0] - R[2] * R[6];
-    R[7] = R[2] * R[3] - R[5] * R[0];
-
-    // 设置x向量为y和z向量的叉乘
-    R[0] = R[4] * R[8] - R[7] * R[5];
-    R[3] = R[7] * R[2] - R[1] * R[8];
-    R[6] = R[1] * R[5] - R[4] * R[2];
-
-    // 计算向量模的倒数
-    norm  = GSRLMath::invSqrt(accel.x * accel.x + accel.y * accel.y + accel.z * accel.z);
-    fmodx = GSRLMath::invSqrt(R[0] * R[0] + R[3] * R[3] + R[6] * R[6]);
-    fmody = GSRLMath::invSqrt(R[1] * R[1] + R[4] * R[4] + R[7] * R[7]);
-
-    // 归一化旋转矩阵
-    R[0] *= fmodx;
-    R[3] *= fmodx;
-    R[6] *= fmodx; // 归一化x轴
-    R[1] *= fmody;
-    R[4] *= fmody;
-    R[7] *= fmody; // 归一化y轴
-    R[2] *= norm;
-    R[5] *= norm;
-    R[8] *= norm; // 归一化z轴
-
-    // ---- 从旋转矩阵计算四元数 ----
-    fp32 fq0sq;                     // q0^2
-    fp32 recip4q0;                  // 1/4q0
-    fp32 fmag;                      // 四元数幅值
-    constexpr fp32 SMALLQ0 = 0.01F; // 舍入误差可能出现的限制
-
-    // 获取q0^2和q0
-    fq0sq           = 0.25f * (1.0f + R[0] + R[4] + R[8]);
-    m_quaternion[0] = sqrtf(fabsf(fq0sq));
-
-    // 正常情况，当q0不小，意味着旋转角度不接近180度
-    if (m_quaternion[0] > SMALLQ0) {
-        // 计算q1到q3
-        recip4q0        = 0.25F / m_quaternion[0];
-        m_quaternion[1] = recip4q0 * (R[5] - R[7]);
-        m_quaternion[2] = recip4q0 * (R[6] - R[2]);
-        m_quaternion[3] = recip4q0 * (R[1] - R[3]);
-    } else {
-        // 接近180度的特殊情况对应近似对称矩阵
-        m_quaternion[1] = sqrtf(fabsf(0.5f * (1.0f + R[0]) - fq0sq));
-        m_quaternion[2] = sqrtf(fabsf(0.5f * (1.0f + R[4]) - fq0sq));
-        m_quaternion[3] = sqrtf(fabsf(0.5f * (1.0f + R[8]) - fq0sq));
-
-        // 确定四元数各分量符号
-        if ((R[1] + R[3]) < 0.0f) {
-            m_quaternion[2] = -m_quaternion[2];
-            if ((R[5] + R[7]) > 0.0f) {
-                m_quaternion[3] = -m_quaternion[3];
-            }
-        } else if ((R[1] + R[3]) > 0.0f && (R[5] + R[7]) < 0.0f) {
-            m_quaternion[3] = -m_quaternion[3];
-        }
-
-        // 如果q1应为负，则对向量分量取反
-        if ((R[5] - R[7]) < 0.0f) {
-            m_quaternion[1] = -m_quaternion[1];
-            m_quaternion[2] = -m_quaternion[2];
-            m_quaternion[3] = -m_quaternion[3];
-        }
-    }
-
-    // 最后重新归一化四元数
-    fmag = GSRLMath::invSqrt(m_quaternion[0] * m_quaternion[0] +
-                             m_quaternion[1] * m_quaternion[1] +
-                             m_quaternion[2] * m_quaternion[2] +
-                             m_quaternion[3] * m_quaternion[3]);
-
-    m_quaternion[0] *= fmag;
-    m_quaternion[1] *= fmag;
-    m_quaternion[2] *= fmag;
-    m_quaternion[3] *= fmag;
-
-    // 从四元数计算欧拉角
-    convertQuaternionToEulerAngle();
-}
-
-/**
  * @brief AHRS姿态解算更新
  * @param gyro 陀螺仪数据
  * @param accel 加速度计数据
@@ -166,11 +61,33 @@ const AHRS::Vector3f &AHRS::update(const Vector3f &gyro, const Vector3f &accel, 
     m_gyro   = gyro; // 转存传感器数据
     m_accel  = accel;
     m_magnet = magnet;
+    if (!m_isAhrsInited) {
+        init(); // AHRS初始化
+        m_isAhrsInited = true;
+    }
     taskENTER_CRITICAL(); // 进入临界区, 禁止任务切换
     dataProcess();
     convertQuaternionToEulerAngle();
     taskEXIT_CRITICAL(); // 退出临界区, 允许任务切换
     return m_eulerAngle;
+}
+
+/**
+ * @brief 获取陀螺仪数据
+ * @return const Vector3f& 陀螺仪数据
+ */
+const AHRS::Vector3f &AHRS::getGyro() const
+{
+    return m_gyro;
+}
+
+/**
+ * @brief 获取加速度计数据
+ * @return const Vector3f& 加速度计数据
+ */
+const AHRS::Vector3f &AHRS::getAccel() const
+{
+    return m_accel;
 }
 
 /**
@@ -196,7 +113,7 @@ const AHRS::Vector3f &AHRS::getEulerAngle() const
  * @note 初始化成员变量
  */
 AHRS::AHRS()
-    : m_gyro(), m_accel(), m_magnet(), m_eulerAngle()
+    : m_gyro(), m_accel(), m_magnet(), m_eulerAngle(), m_isAhrsInited(false)
 {
     m_quaternion[0] = 1.0f; // 初始化四元数为[1, 0, 0, 0]
     m_quaternion[1] = 0.0f;
@@ -270,8 +187,119 @@ void Mahony::reset()
     m_integralFBy   = 0;
     m_integralFBz   = 0;
     m_accelFiltered = 0;
+    m_motionAccelBodyFrame = 0;
+    m_motionAccelEarthFrame = 0;
     for (int i = 0; i < 3; i++) {
         m_accelFilterHistory[i] = 0;
+    }
+}
+
+/**
+ * @brief 初始化AHRS姿态解算, 根据加速度计和磁力计数据初始化四元数
+ * @param accel 加速度计数据
+ * @param magnet 磁力计数据
+ */
+void Mahony::init()
+{
+    // 归一化加速度计数据，得到重力方向单位向量（机体Z轴在大地坐标系中的方向）
+    fp32 recipNorm = GSRLMath::invSqrt(m_accel.x * m_accel.x + m_accel.y * m_accel.y + m_accel.z * m_accel.z);
+    fp32 ax = m_accel.x * recipNorm;
+    fp32 ay = m_accel.y * recipNorm;
+    fp32 az = m_accel.z * recipNorm;
+
+    // 归一化磁力计数据
+    recipNorm = GSRLMath::invSqrt(m_magnet.x * m_magnet.x + m_magnet.y * m_magnet.y + m_magnet.z * m_magnet.z);
+    fp32 mx = m_magnet.x * recipNorm;
+    fp32 my = m_magnet.y * recipNorm;
+    fp32 mz = m_magnet.z * recipNorm;
+
+    // 构建旋转矩阵 (从大地坐标系到机体坐标系的转换矩阵)
+    fp32 R[9]; // 按行优先存储: R[0]=R11, R[1]=R12, R[2]=R13, R[3]=R21, ...
+
+    // 计算东向(East)向量: east = mag × accel (在水平面上，指向东方)
+    fp32 ex = my * az - mz * ay;
+    fp32 ey = mz * ax - mx * az;
+    fp32 ez = mx * ay - my * ax;
+    
+    // 归一化东向向量
+    recipNorm = GSRLMath::invSqrt(ex * ex + ey * ey + ez * ez);
+    ex *= recipNorm;
+    ey *= recipNorm;
+    ez *= recipNorm;
+
+    // 计算北向(North)向量: north = accel × east
+    fp32 nx = ay * ez - az * ey;
+    fp32 ny = az * ex - ax * ez;
+    fp32 nz = ax * ey - ay * ex;
+
+    // 构建旋转矩阵 (NED到Body的转换矩阵)
+    // 第一行: 北向在机体坐标系中的分量
+    R[0] = nx;
+    R[1] = ny;
+    R[2] = nz;
+    // 第二行: 东向在机体坐标系中的分量
+    R[3] = ex;
+    R[4] = ey;
+    R[5] = ez;
+    // 第三行: 地向(Down)在机体坐标系中的分量
+    R[6] = ax;
+    R[7] = ay;
+    R[8] = az;
+
+    // ---- 使用Shepperd方法从旋转矩阵计算四元数 ----
+    
+    fp32 trace = R[0] + R[4] + R[8]; // 矩阵的迹
+    
+    if (trace > 0.0f) {
+        // w是最大的分量
+        fp32 s = sqrtf(trace + 1.0f);
+        m_quaternion[0] = s * 0.5f;
+        s = 0.5f / s;
+        m_quaternion[1] = (R[7] - R[5]) * s;
+        m_quaternion[2] = (R[2] - R[6]) * s;
+        m_quaternion[3] = (R[3] - R[1]) * s;
+    } else if ((R[0] >= R[4]) && (R[0] >= R[8])) {
+        // x是最大的分量
+        fp32 s = sqrtf(1.0f + R[0] - R[4] - R[8]);
+        m_quaternion[1] = s * 0.5f;
+        s = 0.5f / s;
+        m_quaternion[0] = (R[7] - R[5]) * s;
+        m_quaternion[2] = (R[1] + R[3]) * s;
+        m_quaternion[3] = (R[2] + R[6]) * s;
+    } else if (R[4] > R[8]) {
+        // y是最大的分量
+        fp32 s = sqrtf(1.0f + R[4] - R[0] - R[8]);
+        m_quaternion[2] = s * 0.5f;
+        s = 0.5f / s;
+        m_quaternion[0] = (R[2] - R[6]) * s;
+        m_quaternion[1] = (R[1] + R[3]) * s;
+        m_quaternion[3] = (R[5] + R[7]) * s;
+    } else {
+        // z是最大的分量
+        fp32 s = sqrtf(1.0f + R[8] - R[0] - R[4]);
+        m_quaternion[3] = s * 0.5f;
+        s = 0.5f / s;
+        m_quaternion[0] = (R[3] - R[1]) * s;
+        m_quaternion[1] = (R[2] + R[6]) * s;
+        m_quaternion[2] = (R[5] + R[7]) * s;
+    }
+
+    // 归一化四元数，保证数值稳定性
+    recipNorm = GSRLMath::invSqrt(m_quaternion[0] * m_quaternion[0] +
+                                   m_quaternion[1] * m_quaternion[1] +
+                                   m_quaternion[2] * m_quaternion[2] +
+                                   m_quaternion[3] * m_quaternion[3]);
+    m_quaternion[0] *= recipNorm;
+    m_quaternion[1] *= recipNorm;
+    m_quaternion[2] *= recipNorm;
+    m_quaternion[3] *= recipNorm;
+
+    // 从四元数计算欧拉角
+    convertQuaternionToEulerAngle();
+
+    // 初始化DWT计数器时间戳
+    if (m_sampleFreq == 0.0f && DWT_IsInit()) {
+        m_lastUpdateTimestamp = DWT_GetTimestamp();
     }
 }
 
@@ -296,6 +324,8 @@ void Mahony::dataProcess()
     } else {
         Mahony::nineAxisProcess(m_gyro.x, m_gyro.y, m_gyro.z, m_accelFiltered.x, m_accelFiltered.y, m_accelFiltered.z, m_magnet.x, m_magnet.y, m_magnet.z);
     }
+    // 计算运动加速度
+    calculateMotionAccel();
 }
 
 /**
@@ -535,4 +565,73 @@ void Mahony::filterAccel()
     m_accelFilterHistory[2].z = m_accelFilterHistory[1].z * m_accelFilterNum.x + m_accelFilterHistory[0].z * m_accelFilterNum.y + m_accel.z * m_accelFilterNum.z;
     // 更新滤波后的加速度计数据
     m_accelFiltered = m_accelFilterHistory[2];
+}
+
+/**
+ * @brief 获取滤波后的加速度计数据
+ * @return const Vector3f& 滤波后的加速度计数据
+ */
+const Mahony::Vector3f &Mahony::getAccel() const
+{
+    return m_accelFiltered;
+}
+
+/**
+ * @brief 获取机体坐标系下的运动加速度
+ * @return const Vector3f& 机体坐标系下的运动加速度
+ */
+const Mahony::Vector3f &Mahony::getMotionAccelBodyFrame() const
+{
+    return m_motionAccelBodyFrame;
+}
+
+/**
+ * @brief 获取大地坐标系下的运动加速度
+ * @return const Vector3f& 大地坐标系下的运动加速度
+ */
+const Mahony::Vector3f &Mahony::getMotionAccelEarthFrame() const
+{
+    return m_motionAccelEarthFrame;
+}
+
+/**
+ * @brief 计算运动加速度
+ * @note 从滤波后的加速度计数据中减去重力加速度分量,得到机体坐标系下的运动加速度
+ *       然后通过四元数旋转矩阵将其转换到大地坐标系
+ */
+void Mahony::calculateMotionAccel()
+{
+    // 提取四元数分量
+    fp32 q0 = m_quaternion[0];
+    fp32 q1 = m_quaternion[1];
+    fp32 q2 = m_quaternion[2];
+    fp32 q3 = m_quaternion[3];
+
+    // 计算重力加速度在机体坐标系下的分量(单位向量)
+    // 这是通过四元数旋转矩阵的第三列得到的(Z轴方向)
+    fp32 gx = 2.0f * (q1 * q3 - q0 * q2);
+    fp32 gy = 2.0f * (q0 * q1 + q2 * q3);
+    fp32 gz = q0 * q0 - q1 * q1 - q2 * q2 + q3 * q3;
+
+    // 从滤波后的加速度计数据中减去重力分量,得到机体坐标系下的运动加速度
+    // 加速度计测量值包含了重力和运动加速度
+    // 假设重力加速度为9.8m/s^2
+    constexpr fp32 GRAVITY = 9.8f;
+    m_motionAccelBodyFrame.x = m_accelFiltered.x - gx * GRAVITY;
+    m_motionAccelBodyFrame.y = m_accelFiltered.y - gy * GRAVITY;
+    m_motionAccelBodyFrame.z = m_accelFiltered.z - gz * GRAVITY;
+
+    // 将机体坐标系下的运动加速度转换到大地坐标系
+    // 使用四元数旋转矩阵进行坐标变换
+    m_motionAccelEarthFrame.x = (q0 * q0 + q1 * q1 - q2 * q2 - q3 * q3) * m_motionAccelBodyFrame.x +
+                                 2.0f * (q1 * q2 - q0 * q3) * m_motionAccelBodyFrame.y +
+                                 2.0f * (q1 * q3 + q0 * q2) * m_motionAccelBodyFrame.z;
+
+    m_motionAccelEarthFrame.y = 2.0f * (q1 * q2 + q0 * q3) * m_motionAccelBodyFrame.x +
+                                 (q0 * q0 - q1 * q1 + q2 * q2 - q3 * q3) * m_motionAccelBodyFrame.y +
+                                 2.0f * (q2 * q3 - q0 * q1) * m_motionAccelBodyFrame.z;
+
+    m_motionAccelEarthFrame.z = 2.0f * (q1 * q3 - q0 * q2) * m_motionAccelBodyFrame.x +
+                                 2.0f * (q2 * q3 + q0 * q1) * m_motionAccelBodyFrame.y +
+                                 (q0 * q0 - q1 * q1 - q2 * q2 + q3 * q3) * m_motionAccelBodyFrame.z;
 }

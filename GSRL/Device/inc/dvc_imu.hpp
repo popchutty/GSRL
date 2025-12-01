@@ -40,16 +40,20 @@ protected:
     Vector3f m_gyroRawData;   // 陀螺仪原始数据
     Vector3f m_accelRawData;  // 加速度计原始数据
     Vector3f m_magnetRawData; // 磁力计原始数据
-    Vector3f m_gyroData;      // 陀螺仪数据(校准后)
-    Vector3f m_accelData;     // 加速度计数据(校准后)
-    Vector3f m_magnetData;    // 磁力计数据(校准后)
+    Vector3f m_gyroData;      // 陀螺仪数据(校准后传入AHRS)
+    Vector3f m_accelData;     // 加速度计数据(校准后传入AHRS)
+    Vector3f m_magnetData;    // 磁力计数据(校准后传入AHRS)
 
 public:
     virtual ~IMU() = default;
     virtual bool init() = 0;
     const Vector3f &solveAttitude();
-    const Vector3f &getEulerAngle() const;
+    const Vector3f &getGyro() const;
+    const Vector3f &getAccel() const;
+    const Vector3f &getMotionAccelBodyFrame() const;
+    const Vector3f &getMotionAccelEarthFrame() const;
     const fp32 *getQuaternion() const;
+    const Vector3f &getEulerAngle() const;
 
 protected:
     IMU(AHRS *ahrs);

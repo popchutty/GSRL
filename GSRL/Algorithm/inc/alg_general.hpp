@@ -51,7 +51,7 @@ namespace GSRLMath
      * @tparam Tp 数据类型
      */
     template <typename Tp>
-    inline void constrain(Tp &num, Tp limit)
+    constexpr inline void constrain(Tp &num, Tp limit)
     {
         if (num > limit) {
             num = limit;
@@ -69,7 +69,7 @@ namespace GSRLMath
      * @retval 无符号整数结果
      * @details 将给定的浮点数 x 在指定范围 [x_min, x_max] 内进行线性映射，映射结果为一个指定位数的无符号整数
      */
-    inline int convertFloatToUint(float x_float, float x_min, float x_max, int bits)
+    constexpr inline int convertFloatToUint(float x_float, float x_min, float x_max, int bits)
     {
         /* Converts a float to an unsigned int, given range and number of bits */
         float span   = x_max - x_min;
@@ -85,7 +85,7 @@ namespace GSRLMath
     * @retval 浮点数结果
     * @details 将给定的无符号整数 x_int 在指定范围 [x_min, x_max] 内进行线性映射，映射结果为一个浮点数
     */
-    inline float convertUintToFloat(int x_int, float x_min, float x_max, int bits)
+    constexpr inline float convertUintToFloat(int x_int, float x_min, float x_max, int bits)
     {
         /* converts unsigned int to float, given range and number of bits */
         float span   = x_max - x_min;

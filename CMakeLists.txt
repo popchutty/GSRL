@@ -24,6 +24,9 @@ set(CMAKE_PROJECT_NAME GMStdRobotLib)
 # Enable compile command to ease indexing with e.g. clangd
 set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 
+# Enable colored diagnostics
+set(CMAKE_COLOR_DIAGNOSTICS ON)
+
 # Core project settings
 project(${CMAKE_PROJECT_NAME})
 message("Build type: " ${CMAKE_BUILD_TYPE})
@@ -65,7 +68,6 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
 # Add compile options
 target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined compile options
-    -fdiagnostics-color=always
 )
 
 target_link_options(${CMAKE_PROJECT_NAME} PRIVATE

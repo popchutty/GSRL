@@ -149,6 +149,16 @@ void DWT_Init(void)
 }
 
 /**
+ * @brief 检测DWT是否初始化
+ * @return true 已初始化
+ * @return false 未初始化
+ */
+bool DWT_IsInit(void)
+{
+    return isDWTInit;
+}
+
+/**
  * @brief 获取DWT高精度时间戳
  * @return 32位时间戳
  */

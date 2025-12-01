@@ -56,6 +56,7 @@ void Delay_ms(uint16_t ms);
  *                            DWT计时器
  ******************************************************************************/
 void DWT_Init(void);
+bool DWT_IsInit(void);
 uint32_t DWT_GetTimestamp(void);
 fp32 DWT_GetDeltaTime(uint32_t *cnt_last);
 fp64 DWT_GetDeltaTime64(uint32_t *cnt_last);

@@ -31,12 +31,17 @@ protected:
     Vector3f m_magnet;
     Vector3f m_eulerAngle;
     fp32 m_quaternion[4];
+    bool m_isAhrsInited; // AHRS初始化完成标志
 
 public:
     virtual ~AHRS() = default;
     virtual void reset();
-    void init(const Vector3f &accel, const Vector3f &magnet);
+    virtual void init() = 0; // AHRS初始化纯虚函数，在第一次update被调用时执行
     const Vector3f &update(const Vector3f &gyro, const Vector3f &accel, const Vector3f &magnet = Vector3f());
+    virtual const Vector3f &getGyro() const;
+    virtual const Vector3f &getAccel() const;
+    virtual const Vector3f &getMotionAccelBodyFrame() const = 0;
+    virtual const Vector3f &getMotionAccelEarthFrame() const = 0;
     const fp32 *getQuaternion() const;
     const Vector3f &getEulerAngle() const;
 
@@ -60,16 +65,24 @@ private:
     Vector3f m_accelFilterHistory[3]; // 0: oldest, 2: newest
     Vector3f m_accelFiltered;
     Vector3f m_accelFilterNum;
+    // 运动加速度相关
+    Vector3f m_motionAccelBodyFrame;  // 机体坐标系下的运动加速度
+    Vector3f m_motionAccelEarthFrame; // 大地坐标系下的运动加速度
 
 public:
     Mahony(fp32 sampleFreq = 0.0f, Vector3f accelFilterNum = 0, fp32 Kp = 0.5f, fp32 Ki = 0.0f);
     void reset() override;
+    void init() override;
+    const Vector3f &getAccel() const override;
+    const Vector3f &getMotionAccelBodyFrame() const override;
+    const Vector3f &getMotionAccelEarthFrame() const override;
 
 private:
     void dataProcess() override;
     void sixAxisProcess(fp32 gx, fp32 gy, fp32 gz, fp32 ax, fp32 ay, fp32 az);
     void nineAxisProcess(fp32 gx, fp32 gy, fp32 gz, fp32 ax, fp32 ay, fp32 az, fp32 mx, fp32 my, fp32 mz);
     void filterAccel();
+    void calculateMotionAccel();
 };
 
 /* Exported constants --------------------------------------------------------*/

@@ -45,12 +45,43 @@ const IMU::Vector3f &IMU::solveAttitude()
 }
 
 /**
- * @brief 获取欧拉角姿态
- * @retval 欧拉角
+ * @brief 获取陀螺仪数据
+ * @note 数据经过AHRS姿态解算算法处理(矫正、滤波等)
+ * @retval 陀螺仪角速度(rad/s)
  */
-const IMU::Vector3f &IMU::getEulerAngle() const
+const IMU::Vector3f &IMU::getGyro() const
 {
-    return m_ahrs->getEulerAngle();
+    return m_ahrs->getGyro();
+}
+
+/**
+ * @brief 获取加速度计数据
+ * @note 数据经过AHRS姿态解算算法处理(矫正、滤波等)
+ * @retval 加速度(m/s²)
+ */
+const IMU::Vector3f &IMU::getAccel() const
+{
+    return m_ahrs->getAccel();
+}
+
+/**
+ * @brief 获取机体坐标系下的运动加速度
+ * @note 经过AHRS姿态解算算法处理加速度，去除重力分量
+ * @retval 机体坐标系下的运动加速度(m/s²)
+ */
+const IMU::Vector3f &IMU::getMotionAccelBodyFrame() const
+{
+    return m_ahrs->getMotionAccelBodyFrame();
+}
+
+/**
+ * @brief 获取地球坐标系下的运动加速度
+ * @note 经过AHRS姿态解算算法处理加速度，去除重力分量，并转换到地球坐标系
+ * @retval 地球坐标系下的运动加速度(m/s²)
+ */
+const IMU::Vector3f &IMU::getMotionAccelEarthFrame() const
+{
+    return m_ahrs->getMotionAccelEarthFrame();
 }
 
 /**
@@ -60,6 +91,15 @@ const IMU::Vector3f &IMU::getEulerAngle() const
 const fp32 *IMU::getQuaternion() const
 {
     return m_ahrs->getQuaternion();
+}
+
+/**
+ * @brief 获取欧拉角姿态
+ * @retval 欧拉角
+ */
+const IMU::Vector3f &IMU::getEulerAngle() const
+{
+    return m_ahrs->getEulerAngle();
 }
 
 /**
