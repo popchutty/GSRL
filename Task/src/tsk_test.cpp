@@ -46,12 +46,12 @@ GSRLMath::Vector3f eulerAngle;
 // 使用 UART1 连接 H30 模块
 H30 h30(&ahrs, &huart1); 
 GSRLMath::Vector3f h30Euler; // 用于观察 H30 数据
-volatile uint32_t h30_rx_count = 0; // 接收计数器
+//volatile uint32_t h30_rx_count = 0;
 
 // H30 接收回调
 extern "C" void h30RxCallback(uint8_t *Buffer, uint16_t Length)
 {
-    h30_rx_count++;
+    //h30_rx_count++;
     h30.onReceiveData(Buffer, Length);
 }
 // -----------------
