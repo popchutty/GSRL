@@ -40,57 +40,9 @@ const IMU::Vector3f &IMU::solveAttitude()
 {
     readRawData();
     dataCalibration();
+
     m_ahrs->update(m_gyroData, m_accelData, m_magnetData);
     return m_ahrs->getEulerAngle();
-}
-
-/**
- * @brief 获取陀螺仪数据
- * @note 数据经过AHRS姿态解算算法处理(矫正、滤波等)
- * @retval 陀螺仪角速度(rad/s)
- */
-const IMU::Vector3f &IMU::getGyro() const
-{
-    return m_ahrs->getGyro();
-}
-
-/**
- * @brief 获取加速度计数据
- * @note 数据经过AHRS姿态解算算法处理(矫正、滤波等)
- * @retval 加速度(m/s²)
- */
-const IMU::Vector3f &IMU::getAccel() const
-{
-    return m_ahrs->getAccel();
-}
-
-/**
- * @brief 获取机体坐标系下的运动加速度
- * @note 经过AHRS姿态解算算法处理加速度，去除重力分量
- * @retval 机体坐标系下的运动加速度(m/s²)
- */
-const IMU::Vector3f &IMU::getMotionAccelBodyFrame() const
-{
-    return m_ahrs->getMotionAccelBodyFrame();
-}
-
-/**
- * @brief 获取地球坐标系下的运动加速度
- * @note 经过AHRS姿态解算算法处理加速度，去除重力分量，并转换到地球坐标系
- * @retval 地球坐标系下的运动加速度(m/s²)
- */
-const IMU::Vector3f &IMU::getMotionAccelEarthFrame() const
-{
-    return m_ahrs->getMotionAccelEarthFrame();
-}
-
-/**
- * @brief 获取四元数姿态
- * @retval 四元数
- */
-const fp32 *IMU::getQuaternion() const
-{
-    return m_ahrs->getQuaternion();
 }
 
 /**
@@ -100,6 +52,15 @@ const fp32 *IMU::getQuaternion() const
 const IMU::Vector3f &IMU::getEulerAngle() const
 {
     return m_ahrs->getEulerAngle();
+}
+
+/**
+ * @brief 获取四元数姿态
+ * @retval 四元数
+ */
+const fp32 *IMU::getQuaternion() const
+{
+    return m_ahrs->getQuaternion();
 }
 
 /**
@@ -540,7 +501,7 @@ inline void BMI088::readMultiReg(const SPIConfig &spiConfig, uint8_t reg, uint8_
     reg |= 0x80;                                                                   // 设置读操作位
     uint8_t dummy = 0x55;                                                          // 占位符
     HAL_GPIO_WritePin(spiConfig.csGPIOGroup, spiConfig.csGPIOPin, GPIO_PIN_RESET); // CS LOW
-    HAL_SPI_Transmit(spiConfig.hspi, &reg, 1, 1000);                               // 发送寄存器地址
+    HAL_SPI_Transmit(spiConfig.hspi,&reg , 1, 1000);                               // 发送寄存器地址
     if (&spiConfig == &m_accelSPIConfig) {
         HAL_SPI_Transmit(spiConfig.hspi, &dummy, 1, 1000); // 仅加速度计需要发送Dummy字节
     }
@@ -561,3 +522,231 @@ inline void BMI088::writeSingleReg(const SPIConfig &spiConfig, uint8_t reg, cons
     HAL_SPI_Transmit(spiConfig.hspi, &txData, 1, 1000);                            // 发送数据
     HAL_GPIO_WritePin(spiConfig.csGPIOGroup, spiConfig.csGPIOPin, GPIO_PIN_SET);   // CS HIGH
 }
+
+
+
+/******************************************************************************
+ *                            WEEHLTEC_H30类实现
+ ******************************************************************************/
+
+/**
+ * @brief H30构造函数
+ * @param ahrs 姿态解算算法接口
+ * @param huart 串口句柄
+ * @param errorCallback 错误回调函数
+ */
+H30::H30(AHRS *ahrs, UART_HandleTypeDef *huart, ErrorCallback errorCallback)
+    : IMU(ahrs), m_huart(huart), m_errorCallback(errorCallback)
+{
+    m_errorCode = NO_ERROR;
+    m_rxLength  = 0;
+    m_temperature = 0.0f;
+    m_timestamp = 0;
+}
+
+/**
+ * @brief 初始化H30
+ */
+bool H30::init()
+{
+    uint8_t config_cmd[] = {0x59, 0x53, 0x03, 0x0A, 0x00, 0x04, 0x11, 0x2E}; 
+    HAL_UART_Transmit(m_huart, config_cmd, sizeof(config_cmd), 100);  
+    return true;
+}
+
+/**
+ * @brief 姿态解算 (使用H30内部解算结果)
+ */
+const IMU::Vector3f &H30::solveAttitude()
+{
+    readRawData();
+    dataCalibration();
+    // 直接返回模块输出的欧拉角，不经过AHRS计算
+    return m_eulerRawData;
+}
+
+/**
+ * @brief 获取欧拉角 (使用H30内部解算结果)
+ */
+const IMU::Vector3f &H30::getEulerAngle() const
+{
+    return m_eulerRawData;
+}
+
+/**
+ * @brief 获取四元数 (使用H30内部解算结果)
+ */
+const fp32 *H30::getQuaternion() const
+{
+    return m_quatRawData;
+}
+
+/**
+ * @brief 数据接收回调处理
+ * @param data 接收到的数据指针
+ * @param length 数据长度
+ */
+void H30::onReceiveData(uint8_t *data, uint16_t length)
+{
+    if (length > sizeof(m_rxBuffer)) {
+        handleError(FRAME_LENGTH_ERROR);
+        return;
+    }
+    memcpy(m_rxBuffer, data, length);
+    m_rxLength = length;
+}
+
+/**
+ * @brief 读取原始数据 (解析接收缓冲区)
+ */
+void H30::readRawData()
+{
+    // 1. 检查帧头 (0x59 0x53)
+    if (m_rxBuffer[0] != FRAME_HEAD_0 || m_rxBuffer[1] != FRAME_HEAD_1) {
+        handleError(FRAME_HEAD_ERROR);
+        return;
+    }
+
+    // 2. 检查长度
+    // Header(2) + TID(2) + LEN(1) + Payload(N) + CK(2)
+    uint8_t payload_len = m_rxBuffer[4];
+    uint8_t full_packet_len = payload_len + 7;
+
+    if (m_rxLength < full_packet_len) { 
+        handleError(FRAME_LENGTH_ERROR);
+        return;
+    }
+
+    // 3. 校验和检查
+    // H30协议校验范围：TID(2) + LEN(1) + Payload(N)
+    // 起始位置：m_rxBuffer + 2
+    // 校验长度：payload_len + 3 (2字节TID + 1字节LEN + N字节Payload)
+    if (!validateChecksum(m_rxBuffer + 2, payload_len + 3)) { 
+        handleError(CHECKSUM_ERROR);
+        return;
+    }
+
+    // 4. 解析 Payload (从第5字节开始)
+    uint8_t *pData = &m_rxBuffer[5];
+    uint8_t *pEnd  = pData + payload_len;
+
+    while (pData < pEnd) {
+        uint8_t dataID = *pData++;
+        uint8_t len    = *pData++;
+
+        if (pData + len > pEnd) break; // 防止越界
+
+        switch (dataID) {
+            case DATA_ID_ACCEL: // 0x10: 加速度 (m/s^2)
+                if (len == 12) {
+                    int32_t temp;
+                    for (int i = 0; i < 3; i++) {
+                        temp = (int32_t)(pData[i * 4] | (pData[i * 4 + 1] << 8) | (pData[i * 4 + 2] << 16) | (pData[i * 4 + 3] << 24));
+                        m_accelRawData[i] = (fp32)temp * 0.000001f; // 1e-6
+                    }
+                }
+                break;
+
+            case DATA_ID_GYRO: // 0x20: 角速度 (deg/s)
+                if (len == 12) {
+                    int32_t temp;
+                    for (int i = 0; i < 3; i++) {
+                        temp = (int32_t)(pData[i * 4] | (pData[i * 4 + 1] << 8) | (pData[i * 4 + 2] << 16) | (pData[i * 4 + 3] << 24));
+                        m_gyroRawData[i] = (fp32)temp * 0.000001f; // 1e-6
+                    }
+                }
+                break;
+
+            case DATA_ID_MAG_NORM: // 0x30: 磁场归一化
+            case DATA_ID_MAG_RAW:  // 0x31: 磁场强度 (mGauss)
+                if (len == 12) {
+                    int32_t temp;
+                    for (int i = 0; i < 3; i++) {
+                        temp = (int32_t)(pData[i * 4] | (pData[i * 4 + 1] << 8) | (pData[i * 4 + 2] << 16) | (pData[i * 4 + 3] << 24));
+                        if (dataID == DATA_ID_MAG_RAW)
+                            m_magnetRawData[i] = (fp32)temp * 0.001f; // mGauss
+                        else
+                            m_magnetRawData[i] = (fp32)temp * 0.000001f; // 归一化值
+                    }
+                }
+                break;
+
+            case DATA_ID_EULER: // 0x40: 欧拉角 (deg)
+                if (len == 12) {
+                    int32_t temp;
+                    for (int i = 0; i < 3; i++) {
+                        temp = (int32_t)(pData[i * 4] | (pData[i * 4 + 1] << 8) | (pData[i * 4 + 2] << 16) | (pData[i * 4 + 3] << 24));
+                        m_eulerRawData[i] = (fp32)temp * 0.000001f;
+                    }
+                }
+                break;
+
+            case DATA_ID_QUAT: // 0x41: 四元数
+                if (len == 16) {
+                    int32_t temp;
+                    for (int i = 0; i < 4; i++) {
+                        temp = (int32_t)(pData[i * 4] | (pData[i * 4 + 1] << 8) | (pData[i * 4 + 2] << 16) | (pData[i * 4 + 3] << 24));
+                        m_quatRawData[i] = (fp32)temp * 0.000001f;
+                    }
+                }
+                break;
+
+            case DATA_ID_TEMP: // 0x01: 温度
+                if (len == 2) {
+                    int16_t temp = (int16_t)(pData[0] | (pData[1] << 8));
+                    m_temperature = (fp32)temp * 0.01f;
+                }
+                break;
+
+            case DATA_ID_TIMESTAMP: // 0x51: 时间戳
+                if (len == 4) {
+                    m_timestamp = (uint32_t)(pData[0] | (pData[1] << 8) | (pData[2] << 16) | (pData[3] << 24));
+                }
+                break;
+
+            default:
+                break;
+        }
+        pData += len;
+    }
+}
+
+/**
+ * @brief 数据校准
+ */
+void H30::dataCalibration()
+{
+    // 单位转换和坐标系调整
+    const fp32 DEG2RAD = 0.0174532925f;
+    
+    m_gyroData = m_gyroRawData * DEG2RAD; // 转成弧度
+    m_accelData = m_accelRawData;         // 加速度保持 m/s^2
+    m_magnetData = m_magnetRawData;       // 磁力计数据
+}
+
+/**
+ * @brief 校验和计算
+ */
+bool H30::validateChecksum(uint8_t *data, uint16_t len)
+{
+    uint8_t ck1 = 0, ck2 = 0;
+    for (uint16_t i = 0; i < len; i++) {
+        ck1 += data[i];
+        ck2 += ck1;
+    }
+    // 比较最后两个字节
+    return (ck1 == data[len] && ck2 == data[len + 1]);
+}
+
+/**
+ * @brief 错误处理
+ */
+void H30::handleError(ErrorCode errorCode)
+{
+    m_errorCode = errorCode;
+    if (m_errorCode != NO_ERROR && m_errorCallback != nullptr) {
+        m_errorCallback(errorCode);
+    }
+}
+
+

@@ -40,20 +40,34 @@ protected:
     Vector3f m_gyroRawData;   // 陀螺仪原始数据
     Vector3f m_accelRawData;  // 加速度计原始数据
     Vector3f m_magnetRawData; // 磁力计原始数据
-    Vector3f m_gyroData;      // 陀螺仪数据(校准后传入AHRS)
-    Vector3f m_accelData;     // 加速度计数据(校准后传入AHRS)
-    Vector3f m_magnetData;    // 磁力计数据(校准后传入AHRS)
+    Vector3f m_gyroData;      // 陀螺仪数据(校准后)
+    Vector3f m_accelData;     // 加速度计数据(校准后)
+    Vector3f m_magnetData;    // 磁力计数据(校准后)
 
 public:
     virtual ~IMU() = default;
     virtual bool init() = 0;
-    const Vector3f &solveAttitude();
-    const Vector3f &getGyro() const;
-    const Vector3f &getAccel() const;
-    const Vector3f &getMotionAccelBodyFrame() const;
-    const Vector3f &getMotionAccelEarthFrame() const;
-    const fp32 *getQuaternion() const;
-    const Vector3f &getEulerAngle() const;
+
+    /**
+     * @brief 姿态解算
+     * @note 默认实现：调用 m_ahrs->update() 进行软件解算 (适用于 BMI088 等输出原始数据的传感器)
+     * @note 派生类重写：如果传感器(如 H30)内部已有解算结果，可重写此函数直接返回结果，跳过软件解算
+     */
+    virtual const Vector3f &solveAttitude();
+
+    /**
+     * @brief 获取欧拉角
+     * @note 默认实现：返回 m_ahrs 中的计算结果
+     * @note 派生类重写：直接返回传感器内部解算的欧拉角
+     */
+    virtual const Vector3f &getEulerAngle() const;
+
+    /**
+     * @brief 获取四元数
+     * @note 默认实现：返回 m_ahrs 中的计算结果
+     * @note 派生类重写：直接返回传感器内部解算的四元数
+     */
+    virtual const fp32 *getQuaternion() const;
 
 protected:
     IMU(AHRS *ahrs);
@@ -152,6 +166,94 @@ private:
     bool selfTestGyro();
 };
 
+
+/**
+ * @brief WEEHLTEC_H30 UART接口IMU类
+ * @details 适用于H30等使用YIS通讯协议的模块
+ */
+class H30 : public IMU
+{
+public:
+    // 错误码定义
+    enum ErrorCode : uint8_t {
+        NO_ERROR           = 0x00,
+        CHECKSUM_ERROR     = 0x01, // CK1/CK2校验失败
+        FRAME_HEAD_ERROR   = 0x02, // 帧头不是 0x59 0x53
+        FRAME_LENGTH_ERROR = 0x03, // 长度不符合预期
+        TIMEOUT_ERROR      = 0x04, // 超时未收到数据
+    };
+    
+    typedef void (*ErrorCallback)(ErrorCode errorCode); 
+
+    /**
+     * @brief 构造函数
+     * @param ahrs 姿态解算算法接口
+     * @param huart 串口句柄
+     * @param errorCallback 错误回调函数
+     */
+    H30(AHRS *ahrs, UART_HandleTypeDef *huart, ErrorCallback errorCallback = nullptr);
+
+    bool init() override;
+
+    /**
+     * @brief 姿态解算 (重写)
+     * @note 直接使用 H30 内部硬件解算结果，不经过软件 AHRS
+     */
+    const Vector3f &solveAttitude() override;
+
+    /**
+     * @brief 获取欧拉角 (重写)
+     * @note 返回 H30 内部解算的欧拉角
+     */
+    const Vector3f &getEulerAngle() const override;
+
+    /**
+     * @brief 获取四元数 (重写)
+     * @note 返回 H30 内部解算的四元数
+     */
+    const fp32 *getQuaternion() const override;
+
+    /**
+     * @brief 数据接收回调处理
+     * @note 需要在 drv_uart 的回调函数中调用此方法
+     */
+    void onReceiveData(uint8_t *data, uint16_t length);
+
+protected:
+    void readRawData() override;
+    void dataCalibration() override;
+
+private:
+    UART_HandleTypeDef *m_huart;
+    ErrorCallback m_errorCallback;
+    ErrorCode m_errorCode;
+
+    // 协议常量
+    static constexpr uint8_t FRAME_HEAD_0 = 0x59;
+    static constexpr uint8_t FRAME_HEAD_1 = 0x53;
+    static constexpr uint8_t DATA_ID_TEMP = 0x01;
+    static constexpr uint8_t DATA_ID_ACCEL = 0x10;
+    static constexpr uint8_t DATA_ID_GYRO = 0x20;
+    static constexpr uint8_t DATA_ID_MAG_NORM = 0x30;
+    static constexpr uint8_t DATA_ID_MAG_RAW = 0x31;
+    static constexpr uint8_t DATA_ID_EULER = 0x40;
+    static constexpr uint8_t DATA_ID_QUAT = 0x41;
+    static constexpr uint8_t DATA_ID_TIMESTAMP = 0x51;
+
+    // 接收缓冲区 
+    uint8_t m_rxBuffer[128]; 
+    uint16_t m_rxLength;
+
+    // 额外数据存储
+    fp32 m_temperature;
+    Vector3f m_eulerRawData; // 模块直接输出的欧拉角
+    fp32 m_quatRawData[4];   // 模块直接输出的四元数
+    uint32_t m_timestamp;    // 时间戳
+
+    // 内部辅助函数
+    void handleError(ErrorCode errorCode);
+    bool validateChecksum(uint8_t *data, uint16_t len);
+};
 /* Exported constants --------------------------------------------------------*/
 
 /* Exported macro ------------------------------------------------------------*/
