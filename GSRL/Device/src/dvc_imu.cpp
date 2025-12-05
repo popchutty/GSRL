@@ -122,8 +122,8 @@ IMU::IMU(AHRS *ahrs)
  * @param errorCallback 错误回调函数
  * @param magnet 磁力计扩展类接口
  */
-BMI088::BMI088(AHRS *ahrs, SPIConfig accelSPIConfig, SPIConfig gyroSPIConfig, CalibrationInfo calibrationInfo, ErrorCallback errorCallback, IST8310 *magnet)
-    : IMU(ahrs), m_accelSPIConfig(accelSPIConfig), m_gyroSPIConfig(gyroSPIConfig), m_calibrationInfo(calibrationInfo), m_errorCallback(errorCallback), m_magnet(magnet)
+BMI088::BMI088(AHRS *ahrs, SPIConfig accelSPIConfig, SPIConfig gyroSPIConfig, CalibrationInfo calibrationInfo, ErrorCallback errorCallback, IST8310 *magnet,TIM_HandleTypeDef *heatTim, uint32_t heatChannel)
+    : IMU(ahrs), m_accelSPIConfig(accelSPIConfig), m_gyroSPIConfig(gyroSPIConfig), m_calibrationInfo(calibrationInfo), m_errorCallback(errorCallback), m_magnet(magnet), m_heatTim(heatTim), m_heatChannel(heatChannel)
 {
     m_errorCode = BMI088_NO_ERROR;
 }
@@ -135,6 +135,9 @@ BMI088::BMI088(AHRS *ahrs, SPIConfig accelSPIConfig, SPIConfig gyroSPIConfig, Ca
 bool BMI088::init()
 {
     m_errorCode = BMI088_NO_ERROR;
+    if (m_heatTim != NULL) {
+        HAL_TIM_PWM_Start(m_heatTim, m_heatChannel);
+    }
 
     // self test pass and init
     if (selfTestAccel()) {
@@ -185,9 +188,38 @@ void BMI088::readRawData()
 
     if (bmi088_raw_temp > 1023) {
         bmi088_raw_temp -= 2048;
+        
     }
 
     m_temperature = bmi088_raw_temp * BMI088_TEMP_FACTOR + BMI088_TEMP_OFFSET;
+    controlTemperature();
+}
+void BMI088::controlTemperature()
+{
+    
+    if (m_temperature < -40.0f || m_temperature > 120.0f) {
+        if (m_heatTim != NULL) __HAL_TIM_SET_COMPARE(m_heatTim, m_heatChannel, 0);
+        return;
+    }
+
+    
+    float error = m_tempTarget - m_temperature;
+
+    if (error > -5.0f && error < 5.0f) m_tempErrorSum += error;
+
+    if (m_tempErrorSum > m_tempMaxIout) m_tempErrorSum = m_tempMaxIout;
+    else if (m_tempErrorSum < -m_tempMaxIout) m_tempErrorSum = -m_tempMaxIout;
+
+    float output = (m_tempKp * error) + (m_tempKi * m_tempErrorSum) + (m_tempKd * (error - m_tempLastError));
+    m_tempLastError = error;
+
+    if (output > m_tempMaxOut) output = m_tempMaxOut;
+    else if (output < 0.0f) output = 0.0f;
+
+  
+    if (m_heatTim != NULL) {
+        __HAL_TIM_SET_COMPARE(m_heatTim, m_heatChannel, (uint32_t)output);
+    }
 }
 
 /**
