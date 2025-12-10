@@ -64,6 +64,16 @@ protected:
 class IST8310
 {
 };
+struct HeaterConfig {
+    TIM_HandleTypeDef* tim; // 定时器句柄
+    uint32_t channel;       // 通道
+    float kp;
+    float ki;
+    float kd;
+    float maxOut;           // 输出上限 
+    float maxIOut;          // 积分上限 
+    float targetTemp;       // 目标温度 
+};
 
 /**
  * @brief BMI088类
@@ -134,7 +144,7 @@ protected:
     static constexpr fp32 GYRO_SEN  = BMI088_GYRO_2000_SEN;
 
 public:
-    BMI088(AHRS *ahrs, SPIConfig accelSPIConfig, SPIConfig gyroSPIConfig, CalibrationInfo calibrationInfo, ErrorCallback errorCallback = nullptr, IST8310 *magnet = nullptr,TIM_HandleTypeDef *heatTim = nullptr,uint32_t heatChannel = 0);
+    BMI088(AHRS *ahrs, SPIConfig accelSPIConfig, SPIConfig gyroSPIConfig, CalibrationInfo calibrationInfo, const HeaterConfig& heatConfig, ErrorCallback errorCallback = nullptr, IST8310 *magnet = nullptr);
     bool init() override;
 
 protected:
@@ -153,15 +163,10 @@ private:
     
     TIM_HandleTypeDef *m_heatTim;
     uint32_t m_heatChannel;
-
-    float m_tempTarget = 40.0f;
-    float m_tempKp = 1600.0f;
-    float m_tempKi = 0.2f;
-    float m_tempKd = 0.0f;
+    HeaterConfig m_heatConfig;
     float m_tempErrorSum = 0.0f;
     float m_tempLastError = 0.0f;
-    float m_tempMaxOut = 4500.0f;
-    float m_tempMaxIout = 4400.0f;
+    float m_currentTemp = 0.0f;
 
     
     void controlTemperature();
