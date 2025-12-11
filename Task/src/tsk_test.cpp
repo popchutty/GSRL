@@ -15,6 +15,9 @@
 #include "dvc_remotecontrol.hpp"
 #include "drv_spi.h"
 #include "dvc_imu.hpp"
+#include "usart.h"
+#include <stdio.h>
+#include <string.h>
 
 /* Define --------------------------------------------------------------------*/
 // PID
@@ -29,12 +32,39 @@ SimplePID myPID(SimplePID::PID_POSITION, param);
 // Motor
 MotorDM4310 motor(1, 0, 3.1415926f, 40, 15, &myPID);
 // RemoteControl
-Dr16RemoteControl dr16;
+
+// 初始化ET08A遥控器
+
+/*
+注意：在全局作用域内不能使用这种写法，但在函数内可以
+ET08ARemoteControl::Config et08a_config;
+et08a_config.rightStickX = ET08ARemoteControl::ChannelIndex::CH_1;
+*/
+
+ET08ARemoteControl et08aRc([]{
+    ET08ARemoteControl::Config m_config;
+    // m_config.switchSA = ET08ARemoteControl::ChannelIndex::CH_8;
+    // m_config.switchSB = ET08ARemoteControl::ChannelIndex::CH_7;
+    return m_config;
+}(), 0.05f); // 5% 死区
+
+
+// IMU
+using Vector3f = GSRLMath::Vector3f;
+Mahony ahrs{};
+BMI088::CalibrationInfo cali = {
+    {0.0f, 0.0f, 0.0f}, // gyroOffset
+    {0.0f, 0.0f, 0.0f}, // accelOffset
+    {0.0f, 0.0f, 0.0f},  // magnetOffset
+    {GSRLMath::Matrix33f::MatrixType::IDENTITY} // installSpinMatrix
+};
+BMI088 imu(&ahrs, {&hspi1, GPIOA, GPIO_PIN_4}, {&hspi1, GPIOB, GPIO_PIN_0}, cali);
+GSRLMath::Vector3f eulerAngle;
 
 /* Variables -----------------------------------------------------------------*/
 
 /* Function prototypes -------------------------------------------------------*/
-extern "C" void dr16ITCallback(uint8_t *Buffer, uint16_t Length);
+extern "C" void et08aITCallback(uint8_t *Buffer, uint16_t Length);
 extern "C" void can1RxCallback(can_rx_message_t *pRxMsg);
 inline void transmitMotorsControlData();
 
@@ -46,24 +76,43 @@ inline void transmitMotorsControlData();
  */
 extern "C" void test_task(void *argument)
 {
-    CAN_Init(&hcan1, can1RxCallback);                  // 初始化CAN1
-    UART_Init(&huart3, dr16ITCallback, 36);            // 初始化DR16串口
+    CAN_Init(&hcan1, can1RxCallback); // 初始化CAN1
+    UART_Init(&huart3, et08aITCallback, 36); // 初始化ET08A串口
+    uint16_t count = 0;
+    fp32 angle = 0.0f;
+    while (imu.init() == false)
+    {
+        osDelay(100);
+    } // 初始化IMU
     TickType_t taskLastWakeTime = xTaskGetTickCount(); // 获取任务开始时间
-    while (1) {
-        motor.openloopControl(0.0f);
+    while(1)
+    {
+        eulerAngle = imu.solveAttitude(); // 解算姿态
+        eulerAngle = eulerAngle * 57.3f; // 弧度转角度
+        count ++;
+        if (count>1000)
+        {
+            angle = GSRLMath::normalizeAngle(MATH_PI * 2 / 3 + angle);
+            count = 0;
+        }
+        motor.angleClosedloopControl(angle);
+        
+
         transmitMotorsControlData();
         vTaskDelayUntil(&taskLastWakeTime, 1); // 确保任务以定周期1ms运行
     }
 }
 
 /**
- * @brief DR16接收中断回调函数
+ * @brief et08a接收中断回调函数
  * @param Buffer 接收缓冲区
  * @param Length 接收数据长度
  */
-extern "C" void dr16ITCallback(uint8_t *Buffer, uint16_t Length)
+extern "C" void et08aITCallback(uint8_t *Buffer, uint16_t Length)
 {
-    dr16.receiveRxDataFromISR(Buffer);
+    if (Length > 0) {
+        et08aRc.receiveRxDataFromISR(Buffer);
+    }
 }
 
 extern "C" void can1RxCallback(can_rx_message_t *pRxMsg)
