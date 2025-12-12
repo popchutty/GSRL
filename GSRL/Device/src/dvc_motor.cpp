@@ -50,7 +50,7 @@ uint32_t Motor::getMotorFeedbackMessageID() const
 }
 
 /**
- * @brief 获取电机CAN控制消息头指针
+ * @brief 获取电机CAN控制消息头结构体指针
  * @return const CAN_TxHeaderTypeDef* 电机CAN控制消息头指针
  */
 const CAN_TxHeaderTypeDef *Motor::getMotorControlHeader() const
@@ -59,7 +59,7 @@ const CAN_TxHeaderTypeDef *Motor::getMotorControlHeader() const
 }
 
 /**
- * @brief 获取电机电机CAN控制数据, 同时检测电机连接状态
+ * @brief 获取电机电机CAN控制数组数据, 同时检测电机连接状态
  * @return const uint8_t* 电机CAN控制数据motroControlData[8]
  */
 const uint8_t *Motor::getMotorControlData()
@@ -115,7 +115,7 @@ bool Motor::decodeCanRxMessageFromQueue(const can_rx_message_t *rxMessage, uint8
 bool Motor::decodeCanRxMessageFromISR(const can_rx_message_t *rxMessage)
 {
     if (decodeCanRxMessage(*rxMessage)) {
-        m_motorFeedbackSequence ++;
+        m_motorFeedbackSequence++;
         clearMotorFeedbackErrorCount();
         updateCurrentRevolutions();
         return true;
@@ -269,9 +269,9 @@ void Motor::openloopControl(fp32 controlValue)
  */
 fp32 Motor::angleClosedloopControl()
 {
-    fp32 angleError = GSRLMath::normalizeDeltaAngle(m_currentAngle - m_targetAngle);
+    fp32 angleError      = GSRLMath::normalizeDeltaAngle(m_currentAngle - m_targetAngle);
     fp32 feedBackData[2] = {angleError, m_currentAngularVelocity};
-    m_controllerOutput = m_controller->controllerCalculate(0.0f, feedBackData, 2);
+    m_controllerOutput   = m_controller->controllerCalculate(0.0f, feedBackData, 2);
     if (m_controllerOutputPolarity) {
         m_controllerOutput = -m_controllerOutput;
     }
@@ -297,7 +297,7 @@ fp32 Motor::angleClosedloopControl(fp32 targetAngle)
 fp32 Motor::angularVelocityClosedloopControl()
 {
     fp32 feedBackData[1] = {m_currentAngularVelocity};
-    m_controllerOutput = m_controller->controllerCalculate(m_targetAngularVelocity, feedBackData, 1);
+    m_controllerOutput   = m_controller->controllerCalculate(m_targetAngularVelocity, feedBackData, 1);
     if (m_controllerOutputPolarity) {
         m_controllerOutput = -m_controllerOutput;
     }
@@ -324,7 +324,7 @@ fp32 Motor::angularVelocityClosedloopControl(fp32 targetAngularVelocity)
 fp32 Motor::revolutionsClosedloopControl()
 {
     fp32 feedBackData[2] = {m_currentRevolutions, m_currentAngularVelocity};
-    m_controllerOutput = m_controller->controllerCalculate(m_targetRevolutions, feedBackData, 2);
+    m_controllerOutput   = m_controller->controllerCalculate(m_targetRevolutions, feedBackData, 2);
     if (m_controllerOutputPolarity) {
         m_controllerOutput = -m_controllerOutput;
     }
@@ -350,7 +350,7 @@ fp32 Motor::revolutionsClosedloopControl(fp32 targetRevolutions)
 int16_t Motor::torqueCurrentClosedloopControl()
 {
     fp32 feedBackData[1] = {(fp32)m_currentTorqueCurrent};
-    m_controllerOutput = m_controller->controllerCalculate((fp32)m_targetTorqueCurrent, feedBackData, 1);
+    m_controllerOutput   = m_controller->controllerCalculate((fp32)m_targetTorqueCurrent, feedBackData, 1);
     if (m_controllerOutputPolarity) {
         m_controllerOutput = -m_controllerOutput;
     }
@@ -434,12 +434,11 @@ fp32 Motor::updateCurrentRevolutions()
 {
     if (m_currentAngle - m_lastAngle > MATH_PI) {
         m_roundCount--;
-    } else if (m_currentAngle - m_lastAngle < -MATH_PI)
-    {
+    } else if (m_currentAngle - m_lastAngle < -MATH_PI) {
         m_roundCount++;
     }
     m_currentRevolutions = m_roundCount + (m_currentAngle - m_zeroAngle) / (2 * MATH_PI);
-    m_lastAngle = m_currentAngle;
+    m_lastAngle          = m_currentAngle;
     return m_currentRevolutions;
 }
 
@@ -650,20 +649,20 @@ void MotorDM4310::convertControllerOutputToMotorControlData()
         return;
     }
     // 电机控制
-	uint16_t pos_tmp,vel_tmp,kp_tmp,kd_tmp,tor_tmp;
-	pos_tmp = GSRLMath::convertFloatToUint(0.0f,  -PMAX,  PMAX,  16);
-	vel_tmp = GSRLMath::convertFloatToUint(0.0f,  -VMAX,  VMAX,  12);
-	kp_tmp  = GSRLMath::convertFloatToUint(0.0f,   0.0f, 500.0f, 12);
-	kd_tmp  = GSRLMath::convertFloatToUint(0.0f,   0.0f, 5.0f, 12);
-	tor_tmp = GSRLMath::convertFloatToUint(m_controllerOutput, -TMAX,  TMAX,  12);
-	m_motorControlData[0] = (pos_tmp >> 8);
-	m_motorControlData[1] = pos_tmp;
-	m_motorControlData[2] = (vel_tmp >> 4);
-	m_motorControlData[3] = ((vel_tmp&0xF)<<4)|(kp_tmp>>8);
-	m_motorControlData[4] = kp_tmp;
-	m_motorControlData[5] = (kd_tmp >> 4);
-	m_motorControlData[6] = ((kd_tmp&0xF)<<4)|(tor_tmp>>8);
-	m_motorControlData[7] = tor_tmp;
+    uint16_t pos_tmp, vel_tmp, kp_tmp, kd_tmp, tor_tmp;
+    pos_tmp               = GSRLMath::convertFloatToUint(0.0f, -PMAX, PMAX, 16);
+    vel_tmp               = GSRLMath::convertFloatToUint(0.0f, -VMAX, VMAX, 12);
+    kp_tmp                = GSRLMath::convertFloatToUint(0.0f, 0.0f, 500.0f, 12);
+    kd_tmp                = GSRLMath::convertFloatToUint(0.0f, 0.0f, 5.0f, 12);
+    tor_tmp               = GSRLMath::convertFloatToUint(m_controllerOutput, -TMAX, TMAX, 12);
+    m_motorControlData[0] = (pos_tmp >> 8);
+    m_motorControlData[1] = pos_tmp;
+    m_motorControlData[2] = (vel_tmp >> 4);
+    m_motorControlData[3] = ((vel_tmp & 0xF) << 4) | (kp_tmp >> 8);
+    m_motorControlData[4] = kp_tmp;
+    m_motorControlData[5] = (kd_tmp >> 4);
+    m_motorControlData[6] = ((kd_tmp & 0xF) << 4) | (tor_tmp >> 8);
+    m_motorControlData[7] = tor_tmp;
 }
 
 /**
@@ -697,4 +696,253 @@ bool MotorDM4310::decodeCanRxMessage(const can_rx_message_t &rxMessage)
 void MotorDM4310::setMotorZeroPosition()
 {
     m_setZeroPositionFlag = true;
+}
+
+/******************************************************************************
+ *                           瓴控MG系列电机类实现
+ ******************************************************************************/
+
+/**
+ * @brief 瓴控MG系列电机类构造函数, 用于初始化电机参数
+ * @param lkMotorID 瓴控电机ID (控制ID和反馈ID相同)
+ * @param controller 绑定的控制器
+ * @param encoderOffset 编码器偏移量，默认为0
+ * @param gearboxRatio 电机减速比倒数，用于换算电机转速、角速度和圈数，
+ *                     电机角度不受此值影响，默认为1即不换算
+ * @note lkMotorID范围为1-32，对应反馈ID和控制ID均为0x140 + lkMotorID，Ox140为MG系列电机CAN ID基地址
+ */
+MotorLKMG::MotorLKMG(uint8_t lkMotorID, Controller *controller, uint16_t encoderOffset, uint8_t gearboxRatio)
+    : Motor(0x140u + lkMotorID,
+            0x140u + lkMotorID,
+            controller,
+            encoderOffset),
+      m_lkMotorID(lkMotorID),
+      m_encoderRaw(0),
+      m_isBraked(0),//初始化默认为刹车状态
+      m_gearboxRatio(gearboxRatio) {}
+
+/**
+ * @brief 解析MG电机反馈数据核心函数
+ * @param rxMessage CAN接收消息，是结构体
+ * @return true ID匹配，解析成功
+ * @return false ID不匹配，解析失败
+ * @note 内部函数, 被decodeCanRxMessageFromQueue或decodeCanRxMessageFromISR调用
+ * @note 目前只解析0x9C命令，其他命令可根据需要添加
+ *       0x9C命令数据格式参考MG系列电机协议文档，为：温度、扭矩电流、速度、原始编码器
+ */
+bool MotorLKMG::decodeCanRxMessage(const can_rx_message_t &rxMessage)
+{
+    if (rxMessage.header.StdId != m_motorFeedbackMessageID) return false;
+
+    uint8_t cmd = rxMessage.data[0];
+
+    switch (cmd) {
+        case 0xA1:
+        case 0x9A:
+        case 0xA2:
+        case 0xAD:
+        case 0xA3:
+        case 0xA4:
+        case 0xA5:
+        case 0xA6:
+        case 0xA7:
+        case 0xA8:
+            {
+            m_temperature            = (int8_t)rxMessage.data[1];
+            m_currentTorqueCurrent   = (int16_t)((rxMessage.data[3] << 8) | rxMessage.data[2]);
+            int16_t speedDegreePerSecond   = (int16_t)((rxMessage.data[5] << 8) | rxMessage.data[4]);
+            m_currentAngularVelocity = (fp32)speedDegreePerSecond * (MATH_PI / 180.0f) / m_gearboxRatio;
+            m_encoderRaw             = (uint16_t)((rxMessage.data[7] << 8) | rxMessage.data[6]);
+            uint16_t encAdj          = (uint16_t)(m_encoderRaw - m_encoderOffset);
+            m_currentAngle           = (fp32)encAdj * 2.0f * MATH_PI / (fp32)m_encoderResolution;
+            } break;
+        case 0x8C:
+            {
+              m_isBraked = !(bool)rxMessage.data[1];
+            } break;
+
+            // 有需要再根据协议添加解析其他命令       
+        default:
+            return false;
+    }
+    return true;
+}
+
+/**
+ * @brief 将控制器输出转换为MG系列电机CAN控制数据
+ */
+void MotorLKMG::convertControllerOutputToMotorControlData()
+{
+    if (m_isBraked)
+    {
+        hardwareBrakeControl(0);
+    }
+    else
+    {
+    int16_t iqControl = (int16_t)m_controllerOutput;
+    GSRLMath::constrain(iqControl, m_openloopLimit); // 控制量范围 -2048~2048 对应协议
+    m_motorControlData[0] = 0xA1; // 命令字节：转矩闭环
+    m_motorControlData[1] = 0x00;
+    m_motorControlData[2] = 0x00;
+    m_motorControlData[3] = 0x00;
+    m_motorControlData[4] = (uint8_t)(iqControl & 0xFF);        // 低字节
+    m_motorControlData[5] = (uint8_t)((iqControl >> 8) & 0xFF); // 高字节
+    m_motorControlData[6] = 0x00;
+    m_motorControlData[7] = 0x00;
+    }
+}
+
+/**
+ * @brief 将角速度闭环控制输出值转换为MG电机CAN控制数据
+ * @note 正反转由符号决定
+ */
+void MotorLKMG::hardwareAngularVelocityClosedloopControl()
+{
+    if (m_isBraked) {
+
+        hardwareBrakeControl(0);
+    }
+    else
+    {
+    float targetSpeedDps  = m_targetAngularVelocity;
+    int32_t speedControl  = (int32_t)(targetSpeedDps * 100.0f * m_gearboxRatio * (180.0f / MATH_PI)); // 转换为电机轴速度，单位0.01度每秒
+    uint8_t *p            = (uint8_t *)&speedControl;
+    m_motorControlData[0] = 0xA2;
+    m_motorControlData[1] = 0x00;
+    m_motorControlData[2] = 0x00;
+    m_motorControlData[3] = 0x00;
+    m_motorControlData[4] = p[0];
+    m_motorControlData[5] = p[1];
+    m_motorControlData[6] = p[2];
+    m_motorControlData[7] = p[3];
+    }
+}
+
+/**
+ * @brief 将角速度闭环控制输出值转换为MG电机CAN控制数据
+ * @param AngleVelocity 目标角速度，单位rad/s
+ * @note 正反转由符号决定
+ */
+void MotorLKMG::hardwareAngularVelocityClosedloopControl(fp32 targetAngularVelocity)
+{
+    m_targetAngularVelocity = targetAngularVelocity;
+    hardwareAngularVelocityClosedloopControl();
+}
+
+/**
+ * @brief 将单圈角度闭环控制输出值转换为MG电机CAN控制数据
+ * @note 顺逆转由isMotorClockwise决定，true表示顺时针，false表示逆时针
+ */
+void MotorLKMG::hardwareAngleClosedloopControl()
+{
+    if (m_isBraked) {
+        hardwareBrakeControl(0);
+    }
+    else
+    {
+    float targetAngleDps       = m_targetAngle;
+    int32_t targetAngleControl = (int32_t)(targetAngleDps * 100.0f * m_gearboxRatio * (180.0f / MATH_PI)); // 转换为电机轴速度，单位0.01度每秒
+    uint8_t *p                 = (uint8_t *)&targetAngleControl;
+    float maxVelocityDps       = m_maxVelocity;
+    int32_t maxVelocityControl = (int32_t)(maxVelocityDps * m_gearboxRatio * (180.0f / MATH_PI)); // 转换为电机轴速度，单位0.01度每秒
+    uint8_t *q                 = (uint8_t *)&maxVelocityControl;
+    m_motorControlData[0]      = 0xA6;
+    m_motorControlData[1]      = m_isMotorClockwise;
+    m_motorControlData[2]      = q[0];
+    m_motorControlData[3]      = q[1];
+    m_motorControlData[4]      = p[0];
+    m_motorControlData[5]      = p[1];
+    m_motorControlData[6]      = p[2];
+
+    m_motorControlData[7]      = p[3];
+    }
+}
+
+/**
+ * @brief 将单圈角度闭环控制输出值转换为MG电机CAN控制数据
+ * @param targetAngle 目标角度，单位rad [0, 2PI)
+ * @param maxVelocity 最大允许角速度，单位rad/s
+ * @param isMotorClockwise 是否顺时针旋转到目标角度，true表示顺时针，false表示逆时针
+ * @note 是由电机内置的PID控制器进行闭环控制
+ */
+
+void MotorLKMG::hardwareAngleClosedloopControl(fp32 targetAngle, fp32 maxVelocity, bool isMotorClockwise)
+{
+    if (m_isBraked) {
+        hardwareBrakeControl(0);
+    }
+    m_targetAngle      = targetAngle;
+    m_maxVelocity      = maxVelocity;
+    m_isMotorClockwise = !isMotorClockwise;
+    hardwareAngleClosedloopControl();
+}
+
+/**
+ * @brief 将多圈角度闭环控制输出值转换为MG电机CAN控制数据
+ * @param targetAngle 目标角度，无限制，单位rad
+ * @param maxVelocity 最大允许角速度，单位rad/s
+ * @note 由点击内部自带的PID控制器完成控制
+ */
+void MotorLKMG::hardwareRevolutionsClosedloopControl()
+{
+    if (m_isBraked)
+    {
+        hardwareBrakeControl(0);
+    }
+    else
+    {
+    float targetAngleDps       = m_targetAngle;
+    int32_t targetAngleControl = (int32_t)(targetAngleDps * 100.0f * m_gearboxRatio * (180.0f / MATH_PI)); // 转换为电机轴速度，单位0.01度每秒
+    uint8_t *p                 = (uint8_t *)&targetAngleControl;
+    float maxVelocityDps       = m_maxVelocity;
+    int32_t maxVelocityControl = (int32_t)(maxVelocityDps * m_gearboxRatio * (180.0f / MATH_PI)); // 转换为电机轴速度，单位0.01度每秒
+    uint8_t *q                 = (uint8_t *)&maxVelocityControl;
+    m_motorControlData[0]      = 0xA4;
+    m_motorControlData[1]      = 0x00;
+    m_motorControlData[2]      = q[0];
+    m_motorControlData[3]      = q[1];
+    m_motorControlData[4]      = p[0];
+    m_motorControlData[5]      = p[1];
+    m_motorControlData[6]      = p[2];
+    m_motorControlData[7]      = p[3];
+    }
+}
+
+/**
+ * @brief 将多圈角度闭环控制输出值转换为MG电机CAN控制数据
+ * @param targetAngle 目标角度，无限制，单位rad
+ * @param maxVelocity 最大允许角速度，单位rad/s
+ * @note 由点击内部自带的PID控制器完成控制
+ */
+void MotorLKMG::hardwareRevolutionsClosedloopControl(fp32 targetAngle, fp32 maxVelocity)
+{
+    m_targetAngle = targetAngle;
+    m_maxVelocity = maxVelocity;
+    revolutionsClosedloopControl();
+}
+
+void MotorLKMG::hardwareBrakeControl(bool isBraked)
+{
+    if (isBraked)
+    {
+        m_motorControlData[0] = 0x8C;
+        m_motorControlData[1] = 0x01;
+        m_motorControlData[2] = 0x00;
+        m_motorControlData[3] = 0x00;
+        m_motorControlData[4] = 0x00;
+        m_motorControlData[5] = 0x00;
+        m_motorControlData[6] = 0x00;
+        m_motorControlData[7] = 0x00;
+    }
+    else if(!isBraked)
+    {
+        m_motorControlData[0] = 0x8C;
+        m_motorControlData[1] = 0x00;
+        m_motorControlData[2] = 0x00;
+        m_motorControlData[3] = 0x00;
+        m_motorControlData[4] = 0x00;
+        m_motorControlData[5] = 0x00;
+        m_motorControlData[6] = 0x00;
+        m_motorControlData[7] = 0x00;
+    }
 }
