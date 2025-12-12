@@ -698,3 +698,15 @@ void MotorDM4310::setMotorZeroPosition()
 {
     m_setZeroPositionFlag = true;
 }
+
+/* MotorDM2325 ---------------------------------------------------------------*/
+
+MotorDM2325::MotorDM2325(uint8_t dmControlID, uint8_t dmMasterID, Controller *controller)
+    : MotorDM4310(dmControlID, dmMasterID, DM2325_DEFAULT_PMAX, DM2325_DEFAULT_VMAX, DM2325_DEFAULT_TMAX, controller)
+{
+}
+
+MotorDM2325::MotorDM2325(uint8_t dmControlID, uint8_t dmMasterID, fp32 pmax, fp32 vmax, fp32 tmax, Controller *controller)
+    : MotorDM4310(dmControlID, dmMasterID, pmax, vmax, tmax, controller)
+{
+}

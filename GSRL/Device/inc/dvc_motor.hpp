@@ -180,6 +180,22 @@ public:
     void setMotorZeroPosition();
 };
 
+/**
+ * @brief 达妙DM2325电机类
+ * @note 继承自MotorDM4310，协议一致，仅默认参数不同
+ */
+class MotorDM2325 : public MotorDM4310
+{
+public:
+    // 2325电机默认参数
+    static constexpr fp32 DM2325_DEFAULT_PMAX = 3.141593f;  // PI
+    static constexpr fp32 DM2325_DEFAULT_VMAX = 30.0f;      // rad/s
+    static constexpr fp32 DM2325_DEFAULT_TMAX = 0.9f;       // Nm
+
+    MotorDM2325(uint8_t dmControlID, uint8_t dmMasterID, Controller *controller);
+    MotorDM2325(uint8_t dmControlID, uint8_t dmMasterID, fp32 pmax, fp32 vmax, fp32 tmax, Controller *controller);
+};
+
 /* Exported constants --------------------------------------------------------*/
 
 /* Exported macro ------------------------------------------------------------*/
