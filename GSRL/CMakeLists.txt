@@ -4,7 +4,11 @@ project(gsrl LANGUAGES C CXX)
 
 add_library(${PROJECT_NAME} OBJECT)
 
-set(CMSISCORE "${CMAKE_SOURCE_DIR}/CubeMX_BSP/Drivers/CMSIS/Core")
+if(NOT DEFINED BSP_ROOT)
+    set(BSP_ROOT "CubeMX_BSP") # Default: F4 BSP folder
+endif()
+
+set(CMSISCORE "${CMAKE_SOURCE_DIR}/${BSP_ROOT}/Drivers/CMSIS/Core")
 add_subdirectory(Dependence/CMSIS-DSP)
 add_subdirectory(Dependence/eigen)
 

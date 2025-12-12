@@ -35,7 +35,7 @@ protected:
     // 通信
     uint32_t m_motorControlMessageID;         // 电机CAN控制消息ID
     uint32_t m_motorFeedbackMessageID;        // 电机CAN反馈消息ID
-    CAN_TxHeaderTypeDef m_motorControlHeader; // 电机CAN控制消息头
+    CAN_TxHeader_t m_motorControlHeader;      // 电机CAN控制消息头
     uint8_t m_motorControlData[8];            // 电机CAN控制数据
     uint8_t m_motorFeedbackData[8];           // 电机CAN反馈数据
     uint8_t m_motorFeedbackSequence;          // 电机反馈数据序号, 用于中断接收离线判断
@@ -67,7 +67,7 @@ public:
     // 通信相关
     uint32_t getMotorControlMessageID() const;
     uint32_t getMotorFeedbackMessageID() const;
-    const CAN_TxHeaderTypeDef *getMotorControlHeader() const;
+    const CAN_TxHeader_t *getMotorControlHeader() const;
     const uint8_t *getMotorControlData();
     bool decodeCanRxMessageFromQueue(const can_rx_message_t *rxMessage, uint8_t Size);
     bool decodeCanRxMessageFromISR(const can_rx_message_t *rxMessage);

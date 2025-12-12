@@ -51,9 +51,9 @@ uint32_t Motor::getMotorFeedbackMessageID() const
 
 /**
  * @brief 获取电机CAN控制消息头指针
- * @return const CAN_TxHeaderTypeDef* 电机CAN控制消息头指针
+ * @return const CAN_TxHeader_t* 电机CAN控制消息头指针
  */
-const CAN_TxHeaderTypeDef *Motor::getMotorControlHeader() const
+const CAN_TxHeader_t *Motor::getMotorControlHeader() const
 {
     return &m_motorControlHeader;
 }
@@ -416,10 +416,35 @@ Motor::Motor(uint32_t canControlID, uint32_t canFeedbackID, Controller *controll
       m_controllerOutputPolarity(false),
       m_encoderOffset(encoderOffset)
 {
-    m_motorControlHeader.DLC   = 8;
-    m_motorControlHeader.IDE   = CAN_ID_STD;
-    m_motorControlHeader.RTR   = CAN_RTR_DATA;
+#if defined(STM32H723xx)
+    m_motorControlHeader.DataLength = FDCAN_DLC_BYTES_8;
+    m_motorControlHeader.IdType     = FDCAN_STANDARD_ID;
+    m_motorControlHeader.TxFrameType = FDCAN_DATA_FRAME;
+    m_motorControlHeader.Identifier = m_motorControlMessageID;
+    m_motorControlHeader.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+    m_motorControlHeader.BitRateSwitch = FDCAN_BRS_OFF;
+    m_motorControlHeader.FDFormat = FDCAN_CLASSIC_CAN;
+    m_motorControlHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
+    m_motorControlHeader.MessageMarker = 0;
+#elif defined(STM32F407xx)
     m_motorControlHeader.StdId = m_motorControlMessageID;
+    m_motorControlHeader.ExtId = 0;
+    m_motorControlHeader.IDE = CAN_ID_STD;
+    m_motorControlHeader.RTR = CAN_RTR_DATA;
+    m_motorControlHeader.DLC = 8;
+    m_motorControlHeader.TransmitGlobalTime = DISABLE;
+#else
+    // Default H7
+    m_motorControlHeader.DataLength = FDCAN_DLC_BYTES_8;
+    m_motorControlHeader.IdType     = FDCAN_STANDARD_ID;
+    m_motorControlHeader.TxFrameType = FDCAN_DATA_FRAME;
+    m_motorControlHeader.Identifier = m_motorControlMessageID;
+    m_motorControlHeader.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+    m_motorControlHeader.BitRateSwitch = FDCAN_BRS_OFF;
+    m_motorControlHeader.FDFormat = FDCAN_CLASSIC_CAN;
+    m_motorControlHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
+    m_motorControlHeader.MessageMarker = 0;
+#endif
     memset(m_motorControlData, 0, sizeof(m_motorControlData));
     memset(m_motorFeedbackData, 0, sizeof(m_motorFeedbackData));
 }
@@ -511,7 +536,7 @@ void MotorGM6020::convertControllerOutputToMotorControlData()
  */
 bool MotorGM6020::decodeCanRxMessage(const can_rx_message_t &rxMessage)
 {
-    if (rxMessage.header.StdId != m_motorFeedbackMessageID) return false;
+    if (CAN_GET_STD_ID(rxMessage.header) != m_motorFeedbackMessageID) return false;
 
     m_encoderHistory[1]      = m_encoderHistory[0];
     m_encoderHistory[0]      = (uint16_t)((((rxMessage.data[0] << 8) | rxMessage.data[1]) - m_encoderOffset) & 0x1FFF);
@@ -578,7 +603,7 @@ MotorM3508::MotorM3508(uint8_t dji3508MotorID, Controller *controller, uint16_t 
     // 调用GM6020构造函数后修正为M3508电机发送和接收ID
     m_motorControlMessageID    = dji3508MotorID < 5 ? 0x200 : 0x1FF;
     m_motorFeedbackMessageID   = dji3508MotorID + 0x200;
-    m_motorControlHeader.StdId = m_motorControlMessageID;
+    CAN_SET_STD_ID(m_motorControlHeader, m_motorControlMessageID);
 }
 
 /**
@@ -675,7 +700,7 @@ void MotorDM4310::convertControllerOutputToMotorControlData()
  */
 bool MotorDM4310::decodeCanRxMessage(const can_rx_message_t &rxMessage)
 {
-    if (rxMessage.header.StdId != m_motorFeedbackMessageID) return false;
+    if (CAN_GET_STD_ID(rxMessage.header) != m_motorFeedbackMessageID) return false;
     if ((rxMessage.data[0] & 0x0F) != m_motorControlMessageID) return false;
 
     m_motorState             = (DMMotorState)((rxMessage.data[0]) >> 4);
