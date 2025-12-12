@@ -17,6 +17,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "gsrl_common.h"
 #include "alg_general.hpp"
+#include "alg_filter.hpp"
 
 /* Exported types ------------------------------------------------------------*/
 /**
@@ -83,6 +84,51 @@ private:
     void nineAxisProcess(fp32 gx, fp32 gy, fp32 gz, fp32 ax, fp32 ay, fp32 az, fp32 mx, fp32 my, fp32 mz);
     void filterAccel();
     void calculateMotionAccel();
+};
+
+/**
+ * @brief 卡尔曼解算IMU类实现
+ */
+class Kalman_Quaternion_EKF : public AHRS
+{
+private:
+    // 初始化相关
+    using KF = KalmanFilter<fp32, 6, 3, 0>;
+    KF myKalmanFilter;
+    uint8_t Initialized; // 初始化完成标志：0=未初始化，1=已初始化
+    // 采样频率相关
+    float m_sampleFreq;             // 手动输入的固定采样频率，不使用固定采样频率则给0
+    uint32_t m_lastUpdateTimestamp; // DWT计数器历史值
+    fp32 m_deltaTime;               // 实际采样周期
+    // 卡尔曼相关
+    float q[4];     // 四元数估计值
+    float Q1;       // 四元数更新过程噪声
+    float Q2;       // 陀螺仪零偏过程噪声
+    float R;        // 加速度计量测噪声
+    Vector3f Accel; // 加速度值
+    Vector3f Gyro;
+    Vector3f GyroBias; // 陀螺仪零偏
+    // 卡方检测及细节处理
+    float ChiSquareTestThreshold; // 卡方检验阈值
+    float accLPFcoef;             // 加速度计一阶低通滤波系数（0~1，越小滤得越重），默认0
+    bool isCheckChiSquare;        // 用户给出，判断是否检测卡方 1检测，0不检测
+    KF::StateMatrix FadingFactor; // 渐消因子矩阵
+public:
+    Kalman_Quaternion_EKF(float sampleFreq      = 0.0f,  // 给定刷新频率，给0则自动识别
+                          float q1              = 1e-4f, // 四元数过程噪声基准
+                          float q2              = 1e-6f, // 零偏过程噪声基准
+                          float r               = 1e-2f, // 加计量测噪声基准
+                          float accLPF          = 0.2f,  // 加速度计一阶低通滤波系数（0~1，越小滤得越重），默认0
+                          bool isCheckChiSquare = 1);    // 是否启用卡方检验
+
+    // 复位
+    void reset() override;
+    // 参数配置
+    void setChiSquareThreshold(float Chi); // 卡方检验阈值
+
+private:
+    void dataProcess() override;
+    void EKFProcess(fp32 gx, fp32 gy, fp32 gz, fp32 ax, fp32 ay, fp32 az);
 };
 
 /* Exported constants --------------------------------------------------------*/
