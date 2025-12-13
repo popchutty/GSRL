@@ -699,14 +699,40 @@ void MotorDM4310::setMotorZeroPosition()
     m_setZeroPositionFlag = true;
 }
 
-/* MotorDM2325 ---------------------------------------------------------------*/
-
-MotorDM2325::MotorDM2325(uint8_t dmControlID, uint8_t dmMasterID, Controller *controller)
-    : MotorDM4310(dmControlID, dmMasterID, DM2325_DEFAULT_PMAX, DM2325_DEFAULT_VMAX, DM2325_DEFAULT_TMAX, controller)
+/******************************************************************************
+ *                           DM2325 电机类实现
+ ******************************************************************************/
+/**
+ * @brief 使用默认 MIT 参数的 DM2325 构造函数
+ */
+MotorDM2325::MotorDM2325(uint8_t controlID,
+                         uint8_t masterID,
+                         Controller *controller)
+    : MotorDM4310(controlID,
+                  masterID,
+                  DM2325_DEFAULT_PMAX,
+                  DM2325_DEFAULT_VMAX,
+                  DM2325_DEFAULT_TMAX,
+                  controller)
 {
+    // 与 DM4310 行为保持一致，不额外修改零点或状态
 }
 
-MotorDM2325::MotorDM2325(uint8_t dmControlID, uint8_t dmMasterID, fp32 pmax, fp32 vmax, fp32 tmax, Controller *controller)
-    : MotorDM4310(dmControlID, dmMasterID, pmax, vmax, tmax, controller)
+/**
+ * @brief 使用自定义 MIT 参数的 DM2325 构造函数
+ */
+MotorDM2325::MotorDM2325(uint8_t controlID,
+                         uint8_t masterID,
+                         fp32 pmax,
+                         fp32 vmax,
+                         fp32 tmax,
+                         Controller *controller)
+    : MotorDM4310(controlID,
+                  masterID,
+                  pmax,
+                  vmax,
+                  tmax,
+                  controller)
 {
+    // 与 DM4310 行为保持一致，不额外修改零点或状态
 }
