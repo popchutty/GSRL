@@ -180,6 +180,39 @@ public:
     void setMotorZeroPosition();
 };
 
+/**
+ * @brief 达妙 DM-S2325-1EC 电机类（继承 DM4310）
+ * @note 复用 DM4310 的 MIT 控制协议，仅默认参数不同
+ * @note 使用前先用达妙电机调试助手查看电机驱动板的PMAX、VMAX、TMAX参数，确保控制板与代码中的参数一致，否则会导致数据解包错误
+ */
+class MotorDM2325 : public MotorDM4310
+{
+public:
+    /* ====================== 默认 MIT 参数 ====================== */
+
+    static constexpr fp32 DM2325_DEFAULT_PMAX = 3.141593f;   ///< 最大位置（rad，≈ PI）
+    static constexpr fp32 DM2325_DEFAULT_VMAX = 30.0f;       ///< 最大速度（rad/s）
+    static constexpr fp32 DM2325_DEFAULT_TMAX = 0.9f;        ///< 最大力矩（Nm）
+
+public:
+    /**
+     * @brief DM2325 构造函数（使用默认 MIT 参数）
+     */
+    MotorDM2325(uint8_t controlID,
+                uint8_t masterID,
+                Controller *controller);
+
+    /**
+     * @brief DM2325 构造函数（使用自定义 MIT 参数）
+     */
+    MotorDM2325(uint8_t controlID,
+                uint8_t masterID,
+                fp32 pmax,
+                fp32 vmax,
+                fp32 tmax,
+                Controller *controller);
+};
+
 /* Exported constants --------------------------------------------------------*/
 
 /* Exported macro ------------------------------------------------------------*/
