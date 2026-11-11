@@ -1046,3 +1046,132 @@ void MotorLKMG::setBrake(bool isBraked)
         m_motorControlData[7] = 0x00;
     }
 }
+
+/******************************************************************************
+ * LK MG broadcast firmware (V2.35 commands, V2.36 replies)
+ ******************************************************************************/
+MotorLKMGmulti::MotorLKMGmulti(uint8_t motorID, Controller *controller, uint16_t encoderOffset,
+                             uint8_t encoderBits, fp32 gearboxRatio)
+    : Motor(0x280u, 0x180u + motorID, controller, encoderOffset),
+      m_lkMotorID(motorID), m_encoderBits(encoderBits), m_gearboxRatio(gearboxRatio),
+      m_errorState(0), m_motorState(0x10) {}
+
+bool MotorLKMGmulti::isConfigurationValid() const
+{
+    return m_lkMotorID >= 1 && m_lkMotorID <= 4 &&
+           m_encoderBits >= 14 && m_encoderBits <= 16 &&
+           isfinite(m_gearboxRatio) && m_gearboxRatio > 0;
+}
+
+void MotorLKMGmulti::setControlValue(Command command, fp32 value, fp32 lower, fp32 upper)
+{
+    memset(m_motorControlData, 0, sizeof(m_motorControlData));
+    m_motorControlMessageID = static_cast<uint16_t>(command);
+    m_motorControlHeader.StdId = m_motorControlMessageID;
+    if (!isConfigurationValid()) return;
+    if (!isfinite(value)) value = 0;
+    if (value < lower) value = lower;
+    if (value > upper) value = upper;
+    // Round protocol units after clamping, before the narrowing conversion.
+    const uint16_t encoded = static_cast<uint16_t>(static_cast<int16_t>(roundf(value)));
+    const uint8_t offset = (m_lkMotorID - 1) * 2;
+    m_motorControlData[offset] = static_cast<uint8_t>(encoded);
+    m_motorControlData[offset + 1] = static_cast<uint8_t>(encoded >> 8);
+}
+
+void MotorLKMGmulti::convertControllerOutputToMotorControlData()
+{
+    setControlValue(Command::Torque, m_controllerOutput, -2000.0f, 2000.0f);
+}
+
+bool MotorLKMGmulti::hardwareAngularVelocityClosedloopControl(fp32 radiansPerSecond)
+{
+    if (!isConfigurationValid() || !isfinite(radiansPerSecond)) return false;
+    const fp32 degreesPerSecond = radiansPerSecond * m_gearboxRatio * (180.0f / MATH_PI);
+    if (!isfinite(degreesPerSecond)) return false;
+    m_targetAngularVelocity = radiansPerSecond;
+    setControlValue(Command::Speed, degreesPerSecond,
+                    -32768.0f, 32767.0f);
+    return true;
+}
+
+bool MotorLKMGmulti::hardwareAngleClosedloopControl(fp32 radians)
+{
+    if (!isConfigurationValid() || !isfinite(radians)) return false;
+    const fp32 centidegrees = radians * (18000.0f / MATH_PI);
+    if (!isfinite(centidegrees)) return false;
+    m_targetAngle = radians;
+    setControlValue(Command::Position, centidegrees, -32768.0f, 32767.0f);
+    return true;
+}
+
+bool MotorLKMGmulti::setManagementCommand(Management command)
+{
+    switch (command) {
+        case Management::ReadStatus1: case Management::ClearError: case Management::ReadStatus2:
+        case Management::Disable: case Management::Enable: case Management::Stop: break;
+        default: return false;
+    }
+    if (!isConfigurationValid()) return false;
+    setControlValue(Command::Management, static_cast<uint8_t>(command), 0, 255);
+    return true;
+}
+
+bool MotorLKMGmulti::composeControlFrame(MotorLKMGmulti *const *motors, uint8_t count,
+                                        CAN_TxHeaderTypeDef &header, uint8_t (&data)[8])
+{
+    if (!motors || count == 0 || count > 4) return false;
+    uint8_t mask = 0;
+    uint32_t id = 0;
+    for (uint8_t i = 0; i < count; ++i) {
+        if (!motors[i] || !motors[i]->isConfigurationValid()) return false;
+        const uint8_t bit = static_cast<uint8_t>(1u << (motors[i]->m_lkMotorID - 1));
+        if (mask & bit) return false;
+        mask |= bit;
+        const uint32_t current = motors[i]->getMotorControlMessageID();
+        if (i == 0) id = current;
+        if (current != id) return false;
+    }
+    uint8_t merged[8] = {};
+    for (uint8_t i = 0; i < count; ++i) {
+        // Exactly one connection check per participant; never OR stale slot contents.
+        const uint8_t *own = motors[i]->getMotorControlData();
+        const uint8_t offset = (motors[i]->m_lkMotorID - 1) * 2;
+        merged[offset] = own[offset];
+        merged[offset + 1] = own[offset + 1];
+    }
+    header = *motors[0]->getMotorControlHeader();
+    memcpy(data, merged, sizeof(merged));
+    return true;
+}
+
+bool MotorLKMGmulti::decodeCanRxMessage(const can_rx_message_t &message)
+{
+    if (!isConfigurationValid() || message.header.StdId != m_motorFeedbackMessageID ||
+        message.header.IDE != CAN_ID_STD || message.header.RTR != CAN_RTR_DATA ||
+        message.header.DLC != 8) return false;
+    const uint8_t *d = message.data;
+    switch (d[0]) {
+        case 0x9C: case 0xA1: case 0xA2: case 0xA3: {
+            m_temperature = static_cast<int8_t>(d[1]);
+            m_currentTorqueCurrent = static_cast<int16_t>((uint16_t(d[3]) << 8) | d[2]);
+            const int16_t speed = static_cast<int16_t>((uint16_t(d[5]) << 8) | d[4]);
+            m_currentAngularVelocity = speed * (MATH_PI / 180.0f) / m_gearboxRatio;
+            const uint32_t resolution = 1u << m_encoderBits;
+            const uint32_t raw = (uint16_t(d[7]) << 8) | d[6];
+            const uint32_t adjusted = (raw + resolution - (m_encoderOffset % resolution)) % resolution;
+            m_currentAngle = adjusted * (2.0f * MATH_PI / resolution);
+        } break;
+        case 0x9A: case 0x9B:
+            m_temperature = static_cast<int8_t>(d[1]);
+            m_motorState = d[6];
+            m_errorState = d[7];
+            break;
+        case 0x80: m_motorState = 0x10; break;
+        case 0x88: m_motorState = 0x00; break;
+        case 0x81: break;
+        default: return false;
+    }
+    memcpy(m_motorFeedbackData, d, sizeof(m_motorFeedbackData));
+    return true;
+}

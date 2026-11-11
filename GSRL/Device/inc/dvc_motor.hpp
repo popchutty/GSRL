@@ -271,3 +271,42 @@ protected:
 /* Exported functions prototypes ---------------------------------------------*/
 
 /* Defines -------------------------------------------------------------------*/
+
+/** LK MG broadcast firmware, CAN broadcast protocol V2.35 / replies V2.36.
+ * IDs 1..4; one bus per composed frame. Values use little endian.
+ * This class does not transmit CAN frames or change driver configuration.
+ */
+class MotorLKMGmulti : public Motor
+{
+public:
+    enum class Command : uint16_t { Torque = 0x280, Speed = 0x281, Position = 0x282, Management = 0x288 };
+    enum class Management : uint8_t {
+        ReadStatus1 = 0x9A, ClearError = 0x9B, ReadStatus2 = 0x9C,
+        Disable = 0x80, Enable = 0x88, Stop = 0x81
+    };
+    MotorLKMGmulti(uint8_t motorID, Controller *controller, uint16_t encoderOffset = 0,
+                  uint8_t encoderBits = 16, fp32 gearboxRatio = 1.0f);
+    bool isConfigurationValid() const;
+    uint8_t getMotorID() const { return m_lkMotorID; }
+    uint8_t getErrorState() const { return m_errorState; }
+    uint8_t getMotorState() const { return m_motorState; }
+    bool hardwareAngularVelocityClosedloopControl(fp32 radiansPerSecond);
+    // Absolute position, not a wrapped single-turn target. Range: -327.68..327.67 degrees.
+    bool hardwareAngleClosedloopControl(fp32 radians);
+    bool setManagementCommand(Management command);
+    // Explicit list on ONE CAN bus. Reject duplicate IDs or differing command IDs.
+    // Returns false without modifying output/header or polling motors on validation failure.
+    // Missing slots are zero: a present but omitted position-controlled motor WILL target zero.
+    static bool composeControlFrame(MotorLKMGmulti *const *motors, uint8_t count,
+                                    CAN_TxHeaderTypeDef &header, uint8_t (&data)[8]);
+protected:
+    bool decodeCanRxMessage(const can_rx_message_t &message) override;
+    void convertControllerOutputToMotorControlData() override;
+private:
+    uint8_t m_lkMotorID;
+    uint8_t m_encoderBits;
+    fp32 m_gearboxRatio;
+    uint8_t m_errorState;
+    uint8_t m_motorState;
+    void setControlValue(Command command, fp32 value, fp32 lower, fp32 upper);
+};
