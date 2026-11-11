@@ -276,6 +276,8 @@ protected:
  *       因此同一帧内的电机必须处于同一种控制模式, 位置模式下必须为总线上所有电机设置目标
  * @note 命令最大发送频率: 500Kbps下约600Hz, 1Mbps下约1.2KHz(4个电机)
  * @note 广播模式不支持抱闸器命令, MS系列电机(开环电压范围±850)不在本类支持范围内
+ * @note 控制、合帧和发送需在同一个任务中依次完成, 合帧得到的数据与getMotorControlHeader()的帧ID才能对应
+ * @note 反馈数据在CAN接收中断中更新, 与本库其他电机类相同, 任务中读取到的各状态量不保证来自同一帧
  */
 class MotorLKBroadcast : public Motor
 {
@@ -311,6 +313,15 @@ public:
     };
 
     /**
+     * @brief 编码器位数, 取决于电机型号, 决定反馈编码器值的范围
+     */
+    enum LKEncoderResolution : uint8_t {
+        ENCODER_14BIT = 14, // 编码器值范围 0~16383
+        ENCODER_15BIT = 15, // 编码器值范围 0~32767
+        ENCODER_16BIT = 16  // 编码器值范围 0~65535
+    };
+
+    /**
      * @brief 错误标志位掩码, 与getErrorState()的返回值按位与使用
      */
     enum LKErrorState : uint8_t {
@@ -327,8 +338,7 @@ public:
 protected:
     static constexpr uint8_t m_maxMotorID         = 4;          // 广播模式电机ID上限
     static constexpr int16_t m_torqueLimit        = 2000;       // MF/MG电机力矩控制量限幅
-    static constexpr int16_t m_int16Limit         = 32767;      // 速度、位置控制量限幅
-    static constexpr fp32 m_encoderResolution     = 65536.0f;   // 16bit编码器一圈的计数
+    static constexpr int16_t m_int16Limit         = 32767;      // 速度、位置控制量对称限幅
     static constexpr uint32_t m_invalidFeedbackID = 0xFFFFFFFF; // 电机ID非法时的反馈ID, 不会与任何标准帧匹配
     static constexpr uint8_t m_motorStateOn       = 0x00;       // 状态1中电机开启状态字节
     static constexpr uint8_t m_motorStateOff      = 0x10;       // 状态1中电机关闭状态字节
@@ -337,7 +347,9 @@ protected:
     bool m_isMotorIDValid;      // 电机ID是否合法, 非法时不写控制数据、不解析反馈
     uint8_t m_dataOffset;       // 本电机在广播帧数据段中的槽位起始下标 0/2/4/6
     uint16_t m_encoderRaw;      // 编码器原始值
+    uint16_t m_encoderMask;     // 编码器值掩码, 一圈的计数减1
     fp32 m_gearboxRatio;        // 减速比
+    fp32 m_hardwareTargetAngle; // 硬件位置闭环目标, 单位rad, 以电机自身零点为基准, 与基类m_targetAngle相互独立
     fp32 m_busVoltage;          // 母线电压, 单位V, 由状态1更新
     fp32 m_busCurrent;          // 母线电流, 单位A, 由状态1更新
     uint8_t m_motorState;       // 电机状态字节, 0x00开启 0x10关闭
@@ -346,10 +358,9 @@ protected:
     uint8_t m_mergedData[8];    // getMergedControlData 输出缓冲区
 
 public:
-    MotorLKBroadcast(uint8_t lkMotorID, Controller *controller, uint16_t encoderOffset = 0, fp32 gearboxRatio = 1.0f, LKFeedbackBaseID feedbackBaseID = FEEDBACK_BASE_0x140);
+    MotorLKBroadcast(uint8_t lkMotorID, Controller *controller, uint16_t encoderOffset = 0, fp32 gearboxRatio = 1.0f, LKFeedbackBaseID feedbackBaseID = FEEDBACK_BASE_0x140, LKEncoderResolution encoderResolution = ENCODER_16BIT);
     void hardwareAngularVelocityClosedloopControl();
     void hardwareAngularVelocityClosedloopControl(fp32 targetAngularVelocity);
-    void hardwareAngleClosedloopControl();
     void hardwareAngleClosedloopControl(fp32 targetAngle);
     void setMotorCommand(LKBroadcastCommand command);
     const uint8_t *getMergedControlData(MotorLKBroadcast &otherMotor);

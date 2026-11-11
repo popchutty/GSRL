@@ -1057,8 +1057,9 @@ void MotorLKMG::setBrake(bool isBraked)
  * @param controller 绑定的控制器, 只使用硬件闭环和开环控制时可为nullptr
  * @param encoderOffset 编码器偏移量，默认为0
  * @param gearboxRatio 电机减速比，用于换算电机转速、角速度和硬件闭环目标值，
- *                     电机角度不受此值影响，默认为1即不换算，非正数按1处理
+ *                     电机角度不受此值影响，默认为1即不换算，非有限正数按1处理
  * @param feedbackBaseID 反馈帧ID基地址, 默认为0x140, 协议V2.36固件为0x180
+ * @param encoderResolution 编码器位数, 默认为16位, 需与电机型号一致, 否则角度和圈数错误
  * @note 瓴控广播模式电机ID对应关系如下:
  * | 电机ID   |   1   |   2   |   3   |   4   |
  * | 反馈ID   | 基地址+1 | 基地址+2 | 基地址+3 | 基地址+4 |
@@ -1067,7 +1068,7 @@ void MotorLKMG::setBrake(bool isBraked)
  * @note 电机ID超出范围时该对象失效: 不写入控制数据, 不解析反馈, 不参与合帧,
  *       可通过isMotorIDValid()检查
  */
-MotorLKBroadcast::MotorLKBroadcast(uint8_t lkMotorID, Controller *controller, uint16_t encoderOffset, fp32 gearboxRatio, LKFeedbackBaseID feedbackBaseID)
+MotorLKBroadcast::MotorLKBroadcast(uint8_t lkMotorID, Controller *controller, uint16_t encoderOffset, fp32 gearboxRatio, LKFeedbackBaseID feedbackBaseID, LKEncoderResolution encoderResolution)
     : Motor(TORQUE_CONTROL,
             (lkMotorID >= 1 && lkMotorID <= m_maxMotorID) ? (uint32_t)feedbackBaseID + lkMotorID : m_invalidFeedbackID,
             controller,
@@ -1076,13 +1077,20 @@ MotorLKBroadcast::MotorLKBroadcast(uint8_t lkMotorID, Controller *controller, ui
       m_isMotorIDValid(lkMotorID >= 1 && lkMotorID <= m_maxMotorID),
       m_dataOffset((uint8_t)(((lkMotorID - 1) & 0x3) * 2)),
       m_encoderRaw(0),
-      m_gearboxRatio(gearboxRatio > 0.0f ? gearboxRatio : 1.0f),
+      m_encoderMask(encoderResolution == ENCODER_14BIT ? 0x3FFF : (encoderResolution == ENCODER_15BIT ? 0x7FFF : 0xFFFF)),
+      m_gearboxRatio((isfinite(gearboxRatio) && gearboxRatio > 0.0f) ? gearboxRatio : 1.0f),
+      m_hardwareTargetAngle(0.0f),
       m_busVoltage(0.0f),
       m_busCurrent(0.0f),
       m_motorState(m_motorStateOn),
       m_errorState(0),
       m_isLastMergeComplete(false),
-      m_mergedData{} {}
+      m_mergedData{}
+{
+    // 基类未初始化的帧头字段, 避免非静态对象发送时读取到不确定的值
+    m_motorControlHeader.ExtId              = 0;
+    m_motorControlHeader.TransmitGlobalTime = DISABLE;
+}
 
 /**
  * @brief 解析瓴控广播模式电机反馈数据核心函数
@@ -1118,8 +1126,8 @@ bool MotorLKBroadcast::decodeCanRxMessage(const can_rx_message_t &rxMessage)
             int16_t speedDegreePerSecond = (int16_t)((rxMessage.data[5] << 8) | rxMessage.data[4]);
             m_currentAngularVelocity     = (fp32)speedDegreePerSecond * (MATH_PI / 180.0f) / m_gearboxRatio;
             m_encoderRaw                 = (uint16_t)((rxMessage.data[7] << 8) | rxMessage.data[6]);
-            uint16_t encoderAdjusted     = (uint16_t)(m_encoderRaw - m_encoderOffset);
-            m_currentAngle               = (fp32)encoderAdjusted * 2.0f * MATH_PI / m_encoderResolution;
+            uint16_t encoderAdjusted     = (uint16_t)((m_encoderRaw - m_encoderOffset) & m_encoderMask);
+            m_currentAngle               = (fp32)encoderAdjusted * 2.0f * MATH_PI / ((fp32)m_encoderMask + 1.0f);
         } break;
         case READ_STATE_1:
         case CLEAR_ERROR: {
@@ -1147,16 +1155,18 @@ bool MotorLKBroadcast::decodeCanRxMessage(const can_rx_message_t &rxMessage)
 /**
  * @brief 将控制器输出转换为广播模式力矩控制数据(0x280)
  * @note 控制量范围 -2000~2000, 超出范围限幅, NaN按0处理
+ * @note m_controllerOutput会被更新为实际发送的控制量, 因此基类各闭环方法的返回值是限幅取整后的值
  */
 void MotorLKBroadcast::convertControllerOutputToMotorControlData()
 {
     int16_t torqueControl = convertToControlValue(m_controllerOutput, m_torqueLimit);
+    m_controllerOutput    = (fp32)torqueControl;
     setBroadcastControlData(TORQUE_CONTROL, (uint8_t)(torqueControl & 0xFF), (uint8_t)((torqueControl >> 8) & 0xFF));
 }
 
 /**
  * @brief 电机硬件角速度闭环控制(0x281)
- * @note 正反转由符号决定, 分辨率为电机轴1dps, 电机轴速度范围 -32767~32767dps
+ * @note 正反转由符号决定, 分辨率为电机轴1dps, 电机轴速度对称限幅到 -32767~32767dps
  */
 void MotorLKBroadcast::hardwareAngularVelocityClosedloopControl()
 {
@@ -1178,24 +1188,17 @@ void MotorLKBroadcast::hardwareAngularVelocityClosedloopControl(fp32 targetAngul
 
 /**
  * @brief 电机硬件位置闭环控制(0x282)
- * @note 目标为带符号的绝对位置, 分辨率为电机轴0.01°, 电机轴角度范围 -327.67°~327.67°
+ * @param targetAngle 目标绝对位置，单位rad，带符号，范围约 ±5.72rad / 减速比，超出范围限幅
+ * @note 目标以电机自身零点为基准并按减速比换算到电机轴, 分辨率为电机轴0.01°, 电机轴角度范围 -327.67°~327.67°
+ * @note 该目标与基类软件角度闭环的目标(setTargetAngle, 以编码器偏移量为零点的单圈角度)相互独立
  * @note 位置帧中未写入的槽位代表0°位置, 需为总线上所有电机设置目标后再合帧发送
- */
-void MotorLKBroadcast::hardwareAngleClosedloopControl()
-{
-    fp32 angleCentidegree = m_targetAngle * m_gearboxRatio * (18000.0f / MATH_PI); // 转换为电机轴角度，单位0.01度
-    int16_t angleControl  = convertToControlValue(angleCentidegree, m_int16Limit);
-    setBroadcastControlData(ANGLE_CONTROL, (uint8_t)(angleControl & 0xFF), (uint8_t)((angleControl >> 8) & 0xFF));
-}
-
-/**
- * @brief 电机硬件位置闭环控制(0x282)
- * @param targetAngle 目标绝对位置，单位rad，范围约 ±5.72rad / 减速比，超出范围限幅
  */
 void MotorLKBroadcast::hardwareAngleClosedloopControl(fp32 targetAngle)
 {
-    m_targetAngle = targetAngle;
-    hardwareAngleClosedloopControl();
+    m_hardwareTargetAngle = targetAngle;
+    fp32 angleCentidegree = m_hardwareTargetAngle * m_gearboxRatio * (18000.0f / MATH_PI); // 转换为电机轴角度，单位0.01度
+    int16_t angleControl  = convertToControlValue(angleCentidegree, m_int16Limit);
+    setBroadcastControlData(ANGLE_CONTROL, (uint8_t)(angleControl & 0xFF), (uint8_t)((angleControl >> 8) & 0xFF));
 }
 
 /**
@@ -1224,8 +1227,9 @@ void MotorLKBroadcast::setMotorCommand(LKBroadcastCommand command)
  * @param otherMotor 另一个同控制帧ID的瓴控广播模式电机
  * @return const uint8_t* 合并后的8字节CAN控制数据, 帧头使用本电机的getMotorControlHeader()
  * @note 返回的指针指向内部缓冲区, 下次调用会覆盖
- * @note 控制帧ID与本电机不一致、电机ID非法或重复的电机不会被写入, 其槽位保持为0,
- *       此时isLastMergeComplete()返回false
+ * @note 控制帧ID与本电机不一致、电机ID非法或重复的电机会被跳过, 不会覆盖已写入的槽位,
+ *       此时isLastMergeComplete()返回false, 返回的仍是可发送的部分帧
+ * @note isLastMergeComplete()只表示传入的电机是否全部写入, 不表示4个槽位齐全或发送成功
  */
 const uint8_t *MotorLKBroadcast::getMergedControlData(MotorLKBroadcast &otherMotor)
 {
