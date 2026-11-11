@@ -264,6 +264,113 @@ protected:
     void convertControllerOutputToMotorControlData() override;
 };
 
+/**
+ * @brief 瓴控广播模式(一控四)电机类
+ * @details 该类实现了Motor类的纯虚函数，用于控制开启"广播模式"的瓴控MF/MG系列电机
+ * @details 广播模式以帧ID区分命令类型, 一帧同时携带4个电机的控制量, 每个电机占2字节, 低字节在前
+ * @note 使用前需在瓴控上位机中开启广播模式, 波特率设置为500Kbps或1Mbps, 电机ID只能为1~4
+ * @note 控制帧: 0x280力矩 / 0x281速度 / 0x282位置 / 0x288混合命令, 详见LKBroadcastFrameID
+ * @note 反馈帧: 数据格式与单电机模式相同, 反馈ID = 反馈基地址 + 电机ID, 详见LKFeedbackBaseID
+ * @note 总线上所有在线电机都会执行广播帧中自己槽位的值, 未写入的槽位为0:
+ *       力矩帧中代表0力矩, 速度帧中代表0速度, 位置帧中代表转到0°位置, 混合命令帧中代表无命令。
+ *       因此同一帧内的电机必须处于同一种控制模式, 位置模式下必须为总线上所有电机设置目标
+ * @note 命令最大发送频率: 500Kbps下约600Hz, 1Mbps下约1.2KHz(4个电机)
+ * @note 广播模式不支持抱闸器命令, MS系列电机(开环电压范围±850)不在本类支持范围内
+ */
+class MotorLKBroadcast : public Motor
+{
+public:
+    /**
+     * @brief 广播模式控制帧ID, 帧ID即命令类型
+     */
+    enum LKBroadcastFrameID : uint32_t {
+        TORQUE_CONTROL = 0x280, // 力矩控制, 控制量范围 -2000~2000
+        SPEED_CONTROL  = 0x281, // 速度控制, 1dps/LSB
+        ANGLE_CONTROL  = 0x282, // 位置控制, 0.01°/LSB
+        MIXED_COMMAND  = 0x288  // 混合命令, 各电机执行各自的LKBroadcastCommand
+    };
+
+    /**
+     * @brief 混合命令帧(0x288)支持的电机命令
+     */
+    enum LKBroadcastCommand : uint8_t {
+        MOTOR_OFF    = 0x80, // 电机关闭, 清除圈数及之前接收的控制指令
+        MOTOR_STOP   = 0x81, // 电机停止, 不清除运行状态
+        MOTOR_ON     = 0x88, // 电机开启(上电后默认状态)
+        READ_STATE_1 = 0x9A, // 读取温度、母线电压、母线电流、电机状态和错误标志
+        CLEAR_ERROR  = 0x9B, // 清除错误标志, 电机状态未恢复正常时无法清除
+        READ_STATE_2 = 0x9C  // 读取温度、转矩电流、转速、编码器位置
+    };
+
+    /**
+     * @brief 反馈帧ID基地址, 取决于电机固件的协议版本
+     */
+    enum LKFeedbackBaseID : uint32_t {
+        FEEDBACK_BASE_0x140 = 0x140, // 回复ID = 0x140 + ID, 与本库MotorLKMG一致
+        FEEDBACK_BASE_0x180 = 0x180  // 回复ID = 0x180 + ID, 协议V2.36
+    };
+
+    /**
+     * @brief 错误标志位掩码, 与getErrorState()的返回值按位与使用
+     */
+    enum LKErrorState : uint8_t {
+        ERROR_LOW_VOLTAGE             = 0x01, // 低压保护
+        ERROR_HIGH_VOLTAGE            = 0x02, // 高压保护
+        ERROR_DRIVER_OVER_TEMPERATURE = 0x04, // 驱动过温
+        ERROR_MOTOR_OVER_TEMPERATURE  = 0x08, // 电机过温
+        ERROR_OVER_CURRENT            = 0x10, // 电机过流
+        ERROR_SHORT_CIRCUIT           = 0x20, // 电机短路
+        ERROR_STALL                   = 0x40, // 电机堵转
+        ERROR_INPUT_SIGNAL_LOST       = 0x80  // 输入信号丢失超时
+    };
+
+protected:
+    static constexpr uint8_t m_maxMotorID         = 4;          // 广播模式电机ID上限
+    static constexpr int16_t m_torqueLimit        = 2000;       // MF/MG电机力矩控制量限幅
+    static constexpr int16_t m_int16Limit         = 32767;      // 速度、位置控制量限幅
+    static constexpr fp32 m_encoderResolution     = 65536.0f;   // 16bit编码器一圈的计数
+    static constexpr uint32_t m_invalidFeedbackID = 0xFFFFFFFF; // 电机ID非法时的反馈ID, 不会与任何标准帧匹配
+    static constexpr uint8_t m_motorStateOn       = 0x00;       // 状态1中电机开启状态字节
+    static constexpr uint8_t m_motorStateOff      = 0x10;       // 状态1中电机关闭状态字节
+
+    uint8_t m_lkMotorID;        // 瓴控电机ID [1,4]
+    bool m_isMotorIDValid;      // 电机ID是否合法, 非法时不写控制数据、不解析反馈
+    uint8_t m_dataOffset;       // 本电机在广播帧数据段中的槽位起始下标 0/2/4/6
+    uint16_t m_encoderRaw;      // 编码器原始值
+    fp32 m_gearboxRatio;        // 减速比
+    fp32 m_busVoltage;          // 母线电压, 单位V, 由状态1更新
+    fp32 m_busCurrent;          // 母线电流, 单位A, 由状态1更新
+    uint8_t m_motorState;       // 电机状态字节, 0x00开启 0x10关闭
+    uint8_t m_errorState;       // 错误标志字节, 由状态1更新
+    bool m_isLastMergeComplete; // 最近一次合帧是否写入了全部参与电机
+    uint8_t m_mergedData[8];    // getMergedControlData 输出缓冲区
+
+public:
+    MotorLKBroadcast(uint8_t lkMotorID, Controller *controller, uint16_t encoderOffset = 0, fp32 gearboxRatio = 1.0f, LKFeedbackBaseID feedbackBaseID = FEEDBACK_BASE_0x140);
+    void hardwareAngularVelocityClosedloopControl();
+    void hardwareAngularVelocityClosedloopControl(fp32 targetAngularVelocity);
+    void hardwareAngleClosedloopControl();
+    void hardwareAngleClosedloopControl(fp32 targetAngle);
+    void setMotorCommand(LKBroadcastCommand command);
+    const uint8_t *getMergedControlData(MotorLKBroadcast &otherMotor);
+    const uint8_t *getMergedControlData(MotorLKBroadcast &otherMotor1, MotorLKBroadcast &otherMotor2);
+    const uint8_t *getMergedControlData(MotorLKBroadcast &otherMotor1, MotorLKBroadcast &otherMotor2, MotorLKBroadcast &otherMotor3);
+    bool isLastMergeComplete() const { return m_isLastMergeComplete; }
+    uint8_t getMotorID() const { return m_lkMotorID; }
+    bool isMotorIDValid() const { return m_isMotorIDValid; }
+    uint8_t getErrorState() const { return m_errorState; }
+    fp32 getBusVoltage() const { return m_busVoltage; }
+    fp32 getBusCurrent() const { return m_busCurrent; }
+    bool isMotorOn() const { return m_motorState == m_motorStateOn; }
+
+protected:
+    bool decodeCanRxMessage(const can_rx_message_t &rxMessage) override;
+    void convertControllerOutputToMotorControlData() override;
+    void setBroadcastControlData(LKBroadcastFrameID frameID, uint8_t lowByte, uint8_t highByte);
+    const uint8_t *mergeControlData(MotorLKBroadcast *const otherMotors[], uint8_t otherMotorCount);
+    static int16_t convertToControlValue(fp32 value, int16_t limit);
+};
+
 /* Exported constants --------------------------------------------------------*/
 
 /* Exported macro ------------------------------------------------------------*/

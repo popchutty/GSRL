@@ -1046,3 +1046,297 @@ void MotorLKMG::setBrake(bool isBraked)
         m_motorControlData[7] = 0x00;
     }
 }
+
+/******************************************************************************
+ *                        瓴控广播模式(一控四)电机类实现
+ ******************************************************************************/
+
+/**
+ * @brief 瓴控广播模式电机类构造函数, 用于初始化电机参数
+ * @param lkMotorID 瓴控电机ID, 取值范围 [1, 4]
+ * @param controller 绑定的控制器, 只使用硬件闭环和开环控制时可为nullptr
+ * @param encoderOffset 编码器偏移量，默认为0
+ * @param gearboxRatio 电机减速比，用于换算电机转速、角速度和硬件闭环目标值，
+ *                     电机角度不受此值影响，默认为1即不换算，非正数按1处理
+ * @param feedbackBaseID 反馈帧ID基地址, 默认为0x140, 协议V2.36固件为0x180
+ * @note 瓴控广播模式电机ID对应关系如下:
+ * | 电机ID   |   1   |   2   |   3   |   4   |
+ * | 反馈ID   | 基地址+1 | 基地址+2 | 基地址+3 | 基地址+4 |
+ * | 数据槽位 | D[0:1] | D[2:3] | D[4:5] | D[6:7] |
+ * | 控制ID   | 0x280力矩 / 0x281速度 / 0x282位置 / 0x288混合命令 |
+ * @note 电机ID超出范围时该对象失效: 不写入控制数据, 不解析反馈, 不参与合帧,
+ *       可通过isMotorIDValid()检查
+ */
+MotorLKBroadcast::MotorLKBroadcast(uint8_t lkMotorID, Controller *controller, uint16_t encoderOffset, fp32 gearboxRatio, LKFeedbackBaseID feedbackBaseID)
+    : Motor(TORQUE_CONTROL,
+            (lkMotorID >= 1 && lkMotorID <= m_maxMotorID) ? (uint32_t)feedbackBaseID + lkMotorID : m_invalidFeedbackID,
+            controller,
+            encoderOffset),
+      m_lkMotorID(lkMotorID),
+      m_isMotorIDValid(lkMotorID >= 1 && lkMotorID <= m_maxMotorID),
+      m_dataOffset((uint8_t)(((lkMotorID - 1) & 0x3) * 2)),
+      m_encoderRaw(0),
+      m_gearboxRatio(gearboxRatio > 0.0f ? gearboxRatio : 1.0f),
+      m_busVoltage(0.0f),
+      m_busCurrent(0.0f),
+      m_motorState(m_motorStateOn),
+      m_errorState(0),
+      m_isLastMergeComplete(false),
+      m_mergedData{} {}
+
+/**
+ * @brief 解析瓴控广播模式电机反馈数据核心函数
+ * @param rxMessage CAN接收消息结构体
+ * @return true ID匹配，解析成功
+ * @return false ID不匹配或不是可识别的回复，解析失败
+ * @note 内部函数, 被decodeCanRxMessageFromQueue或decodeCanRxMessageFromISR调用
+ * @note 广播模式下电机的回复与单电机模式对应命令的回复相同, 按命令字节D[0]区分:
+ *       状态2格式(0x9C及控制命令0xA0~0xA8): D[1]温度, D[2:3]转矩电流, D[4:5]速度(dps), D[6:7]编码器
+ *       状态1格式(0x9A、0x9B): D[1]温度, D[2:3]母线电压(0.01V), D[4:5]母线电流(0.01A), D[6]电机状态, D[7]错误标志
+ *       开关命令(0x80、0x88、0x81): 回复与发送相同, 只用于确认电机在线和开关状态
+ */
+bool MotorLKBroadcast::decodeCanRxMessage(const can_rx_message_t &rxMessage)
+{
+    if (!m_isMotorIDValid) return false;
+    if (rxMessage.header.IDE != CAN_ID_STD || rxMessage.header.RTR != CAN_RTR_DATA) return false;
+    if (rxMessage.header.StdId != m_motorFeedbackMessageID) return false;
+    if (rxMessage.header.DLC != 8) return false;
+
+    switch (rxMessage.data[0]) {
+        case READ_STATE_2:
+        case 0xA0:
+        case 0xA1:
+        case 0xA2:
+        case 0xA3:
+        case 0xA4:
+        case 0xA5:
+        case 0xA6:
+        case 0xA7:
+        case 0xA8: {
+            m_temperature                = (int8_t)rxMessage.data[1];
+            m_currentTorqueCurrent       = (int16_t)((rxMessage.data[3] << 8) | rxMessage.data[2]);
+            int16_t speedDegreePerSecond = (int16_t)((rxMessage.data[5] << 8) | rxMessage.data[4]);
+            m_currentAngularVelocity     = (fp32)speedDegreePerSecond * (MATH_PI / 180.0f) / m_gearboxRatio;
+            m_encoderRaw                 = (uint16_t)((rxMessage.data[7] << 8) | rxMessage.data[6]);
+            uint16_t encoderAdjusted     = (uint16_t)(m_encoderRaw - m_encoderOffset);
+            m_currentAngle               = (fp32)encoderAdjusted * 2.0f * MATH_PI / m_encoderResolution;
+        } break;
+        case READ_STATE_1:
+        case CLEAR_ERROR: {
+            m_temperature = (int8_t)rxMessage.data[1];
+            m_busVoltage  = (fp32)(int16_t)((rxMessage.data[3] << 8) | rxMessage.data[2]) * 0.01f;
+            m_busCurrent  = (fp32)(int16_t)((rxMessage.data[5] << 8) | rxMessage.data[4]) * 0.01f;
+            m_motorState  = rxMessage.data[6];
+            m_errorState  = rxMessage.data[7];
+        } break;
+        case MOTOR_OFF:
+            m_motorState = m_motorStateOff;
+            break;
+        case MOTOR_ON:
+            m_motorState = m_motorStateOn;
+            break;
+        case MOTOR_STOP:
+            break;
+        default:
+            return false;
+    }
+    memcpy(m_motorFeedbackData, rxMessage.data, sizeof(m_motorFeedbackData));
+    return true;
+}
+
+/**
+ * @brief 将控制器输出转换为广播模式力矩控制数据(0x280)
+ * @note 控制量范围 -2000~2000, 超出范围限幅, NaN按0处理
+ */
+void MotorLKBroadcast::convertControllerOutputToMotorControlData()
+{
+    int16_t torqueControl = convertToControlValue(m_controllerOutput, m_torqueLimit);
+    setBroadcastControlData(TORQUE_CONTROL, (uint8_t)(torqueControl & 0xFF), (uint8_t)((torqueControl >> 8) & 0xFF));
+}
+
+/**
+ * @brief 电机硬件角速度闭环控制(0x281)
+ * @note 正反转由符号决定, 分辨率为电机轴1dps, 电机轴速度范围 -32767~32767dps
+ */
+void MotorLKBroadcast::hardwareAngularVelocityClosedloopControl()
+{
+    fp32 speedDegreePerSecond = m_targetAngularVelocity * m_gearboxRatio * (180.0f / MATH_PI); // 转换为电机轴速度，单位度每秒
+    int16_t speedControl      = convertToControlValue(speedDegreePerSecond, m_int16Limit);
+    setBroadcastControlData(SPEED_CONTROL, (uint8_t)(speedControl & 0xFF), (uint8_t)((speedControl >> 8) & 0xFF));
+}
+
+/**
+ * @brief 电机硬件角速度闭环控制(0x281)
+ * @param targetAngularVelocity 目标角速度，单位rad/s
+ * @note 正反转由符号决定
+ */
+void MotorLKBroadcast::hardwareAngularVelocityClosedloopControl(fp32 targetAngularVelocity)
+{
+    m_targetAngularVelocity = targetAngularVelocity;
+    hardwareAngularVelocityClosedloopControl();
+}
+
+/**
+ * @brief 电机硬件位置闭环控制(0x282)
+ * @note 目标为带符号的绝对位置, 分辨率为电机轴0.01°, 电机轴角度范围 -327.67°~327.67°
+ * @note 位置帧中未写入的槽位代表0°位置, 需为总线上所有电机设置目标后再合帧发送
+ */
+void MotorLKBroadcast::hardwareAngleClosedloopControl()
+{
+    fp32 angleCentidegree = m_targetAngle * m_gearboxRatio * (18000.0f / MATH_PI); // 转换为电机轴角度，单位0.01度
+    int16_t angleControl  = convertToControlValue(angleCentidegree, m_int16Limit);
+    setBroadcastControlData(ANGLE_CONTROL, (uint8_t)(angleControl & 0xFF), (uint8_t)((angleControl >> 8) & 0xFF));
+}
+
+/**
+ * @brief 电机硬件位置闭环控制(0x282)
+ * @param targetAngle 目标绝对位置，单位rad，范围约 ±5.72rad / 减速比，超出范围限幅
+ */
+void MotorLKBroadcast::hardwareAngleClosedloopControl(fp32 targetAngle)
+{
+    m_targetAngle = targetAngle;
+    hardwareAngleClosedloopControl();
+}
+
+/**
+ * @brief 设置混合命令帧(0x288)中本电机执行的命令
+ * @param command 电机命令, 不在LKBroadcastCommand范围内的值会被忽略
+ * @note 调用后本电机的控制帧ID变为0x288, 直到下一次调用其他控制方法
+ */
+void MotorLKBroadcast::setMotorCommand(LKBroadcastCommand command)
+{
+    switch (command) {
+        case MOTOR_OFF:
+        case MOTOR_STOP:
+        case MOTOR_ON:
+        case READ_STATE_1:
+        case CLEAR_ERROR:
+        case READ_STATE_2:
+            setBroadcastControlData(MIXED_COMMAND, (uint8_t)command, 0x00);
+            break;
+        default:
+            break;
+    }
+}
+
+/**
+ * @brief 合并两个同控制帧ID的瓴控广播模式电机CAN控制数据, 同时触发双方掉线检测
+ * @param otherMotor 另一个同控制帧ID的瓴控广播模式电机
+ * @return const uint8_t* 合并后的8字节CAN控制数据, 帧头使用本电机的getMotorControlHeader()
+ * @note 返回的指针指向内部缓冲区, 下次调用会覆盖
+ * @note 控制帧ID与本电机不一致、电机ID非法或重复的电机不会被写入, 其槽位保持为0,
+ *       此时isLastMergeComplete()返回false
+ */
+const uint8_t *MotorLKBroadcast::getMergedControlData(MotorLKBroadcast &otherMotor)
+{
+    MotorLKBroadcast *const otherMotors[] = {&otherMotor};
+    return mergeControlData(otherMotors, 1);
+}
+
+/**
+ * @brief 合并三个同控制帧ID的瓴控广播模式电机CAN控制数据, 同时触发各电机掉线检测
+ * @param otherMotor1 第二个电机
+ * @param otherMotor2 第三个电机
+ * @return const uint8_t* 合并后的8字节CAN控制数据
+ */
+const uint8_t *MotorLKBroadcast::getMergedControlData(MotorLKBroadcast &otherMotor1, MotorLKBroadcast &otherMotor2)
+{
+    MotorLKBroadcast *const otherMotors[] = {&otherMotor1, &otherMotor2};
+    return mergeControlData(otherMotors, 2);
+}
+
+/**
+ * @brief 合并四个同控制帧ID的瓴控广播模式电机CAN控制数据, 同时触发各电机掉线检测
+ * @param otherMotor1 第二个电机
+ * @param otherMotor2 第三个电机
+ * @param otherMotor3 第四个电机
+ * @return const uint8_t* 合并后的8字节CAN控制数据
+ */
+const uint8_t *MotorLKBroadcast::getMergedControlData(MotorLKBroadcast &otherMotor1, MotorLKBroadcast &otherMotor2, MotorLKBroadcast &otherMotor3)
+{
+    MotorLKBroadcast *const otherMotors[] = {&otherMotor1, &otherMotor2, &otherMotor3};
+    return mergeControlData(otherMotors, 3);
+}
+
+/**
+ * @brief 写入本电机在广播帧中的槽位, 同时切换控制帧ID
+ * @param frameID 控制帧ID
+ * @param lowByte 槽位低字节
+ * @param highByte 槽位高字节
+ * @note 只写本电机的2字节槽位, 其余字节恒为0
+ * @note 该函数仅供内部或派生类调用
+ */
+void MotorLKBroadcast::setBroadcastControlData(LKBroadcastFrameID frameID, uint8_t lowByte, uint8_t highByte)
+{
+    if (!m_isMotorIDValid) return;
+
+    m_motorControlMessageID              = frameID;
+    m_motorControlHeader.StdId           = frameID;
+    m_motorControlData[m_dataOffset]     = lowByte;
+    m_motorControlData[m_dataOffset + 1] = highByte;
+}
+
+/**
+ * @brief 合并本电机与其他电机的广播帧槽位
+ * @param otherMotors 其他电机指针数组
+ * @param otherMotorCount 其他电机数量
+ * @return const uint8_t* 合并后的8字节CAN控制数据
+ * @note 每个参与的电机只调用一次getMotorControlData(), 保证掉线检测计数正确
+ * @note 只拷贝各电机自己的槽位, 以本电机的控制帧ID为准
+ * @note 该函数仅供内部或派生类调用
+ */
+const uint8_t *MotorLKBroadcast::mergeControlData(MotorLKBroadcast *const otherMotors[], uint8_t otherMotorCount)
+{
+    const uint8_t *selfData = getMotorControlData();
+    uint8_t occupiedSlots   = 0; // 已写入槽位的位图, 用于检查电机ID重复
+
+    memset(m_mergedData, 0, sizeof(m_mergedData));
+    m_isLastMergeComplete = m_isMotorIDValid;
+    if (m_isMotorIDValid) {
+        m_mergedData[m_dataOffset]     = selfData[m_dataOffset];
+        m_mergedData[m_dataOffset + 1] = selfData[m_dataOffset + 1];
+        occupiedSlots |= (uint8_t)(1u << (m_dataOffset / 2));
+    }
+
+    for (uint8_t i = 0; i < otherMotorCount; i++) {
+        MotorLKBroadcast *otherMotor = otherMotors[i];
+        // 同一个电机对象重复传入时跳过, 避免重复触发掉线检测
+        bool isRepeated = (otherMotor == this);
+        for (uint8_t j = 0; j < i && !isRepeated; j++) {
+            isRepeated = (otherMotors[j] == otherMotor);
+        }
+        if (isRepeated) {
+            m_isLastMergeComplete = false;
+            continue;
+        }
+
+        const uint8_t *otherData = otherMotor->getMotorControlData();
+        uint8_t otherOffset      = otherMotor->m_dataOffset;
+        uint8_t otherSlot        = (uint8_t)(1u << (otherOffset / 2));
+        if (!otherMotor->m_isMotorIDValid ||
+            otherMotor->m_motorControlMessageID != m_motorControlMessageID ||
+            (occupiedSlots & otherSlot) != 0) {
+            m_isLastMergeComplete = false;
+            continue;
+        }
+        m_mergedData[otherOffset]     = otherData[otherOffset];
+        m_mergedData[otherOffset + 1] = otherData[otherOffset + 1];
+        occupiedSlots |= otherSlot;
+    }
+    return m_mergedData;
+}
+
+/**
+ * @brief 将浮点控制量限幅并四舍五入为16位整型控制量
+ * @param value 浮点控制量
+ * @param limit 限幅值, 应为正数
+ * @return int16_t 范围 -limit~limit 的控制量, 输入为NaN时返回0
+ * @note 先在浮点域限幅再转换, 避免超出int16范围的浮点数转换产生回绕
+ */
+int16_t MotorLKBroadcast::convertToControlValue(fp32 value, int16_t limit)
+{
+    if (isnan(value)) return 0;
+    if (value >= (fp32)limit) return limit;
+    if (value <= -(fp32)limit) return (int16_t)(-limit);
+    return (int16_t)(value >= 0.0f ? value + 0.5f : value - 0.5f);
+}
