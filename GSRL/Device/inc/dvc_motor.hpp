@@ -271,3 +271,62 @@ protected:
 /* Exported functions prototypes ---------------------------------------------*/
 
 /* Defines -------------------------------------------------------------------*/
+
+/** LK MG broadcast firmware, CAN broadcast protocol V2.35 / replies V2.36.
+ * IDs 1..4; one bus per composed frame. Values use little endian.
+ * This class does not transmit CAN frames or change driver configuration.
+ */
+class MotorLKMGmulti : public Motor
+{
+public:
+    enum class Command : uint16_t { Torque = 0x280, Speed = 0x281, Position = 0x282, Management = 0x288 };
+    enum class Management : uint8_t {
+        ReadStatus1 = 0x9A, ClearError = 0x9B, ReadStatus2 = 0x9C,
+        Disable = 0x80, Enable = 0x88, Stop = 0x81
+    };
+    MotorLKMGmulti(uint8_t motorID, Controller *controller, uint16_t encoderOffset = 0,
+                  uint8_t encoderBits = 16, fp32 gearboxRatio = 1.0f);
+    enum class FeedbackState : uint8_t { NeverReceived, Online, Offline };
+    enum class ComposeResult : uint8_t {
+        Success, InvalidArgument, InvalidConfiguration, DuplicateMotorID,
+        MixedCommands, InvalidCommand, IncompleteMotorSet, FeedbackUnavailable
+    };
+    bool isConfigurationValid() const;
+    FeedbackState getFeedbackState() const;
+    // These flags mean a corresponding reply was received, not that it is fresh.
+    bool hasValidMotorStatus() const { return m_hasValidMotorStatus; }
+    bool hasValidErrorStatus() const { return m_hasValidErrorStatus; }
+    // Preserve the project's spelling, but do not report startup polling as feedback.
+    bool isMotorConected() const { return getFeedbackState() == FeedbackState::Online; }
+    uint8_t getMotorID() const { return m_lkMotorID; }
+    uint8_t getErrorState() const { return m_errorState; }
+    uint8_t getMotorState() const { return m_motorState; }
+    bool hardwareAngularVelocityClosedloopControl(fp32 radiansPerSecond);
+    // Absolute position, not a wrapped single-turn target. Range: -327.68..327.67 degrees.
+    bool hardwareAngleClosedloopControl(fp32 radians);
+    bool setManagementCommand(Management command);
+    // Explicit list on ONE CAN bus. Reject duplicate IDs or differing command IDs.
+    // ALL installed IDs must be listed. The legacy overload cannot verify bus membership.
+    // Always gate transmission on true: outputs are unchanged on EVERY failure.
+    // Queries, Stop and Disable can be composed before first feedback or while offline.
+    // Missing slots are zero: a present but omitted position-controlled motor WILL target zero.
+    static bool composeControlFrame(MotorLKMGmulti *const *motors, uint8_t count,
+                                    CAN_TxHeaderTypeDef &header, uint8_t (&data)[8]);
+    // expectedMotorMask: bits 0..3 identify installed IDs 1..4; 0 retains legacy checking.
+    static bool composeControlFrame(MotorLKMGmulti *const *motors, uint8_t count,
+                                    CAN_TxHeaderTypeDef &header, uint8_t (&data)[8],
+                                    uint8_t expectedMotorMask, ComposeResult *result = nullptr);
+protected:
+    bool decodeCanRxMessage(const can_rx_message_t &message) override;
+    void convertControllerOutputToMotorControlData() override;
+private:
+    uint8_t m_lkMotorID;
+    uint8_t m_encoderBits;
+    fp32 m_gearboxRatio;
+    uint8_t m_errorState;
+    uint8_t m_motorState; // 0xFF until a status/enable/disable reply establishes a value
+    bool m_hasReceivedFeedback;
+    bool m_hasValidMotorStatus;
+    bool m_hasValidErrorStatus;
+    void setControlValue(Command command, fp32 value, fp32 lower, fp32 upper);
+};

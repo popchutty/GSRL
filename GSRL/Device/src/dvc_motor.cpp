@@ -97,6 +97,7 @@ bool Motor::decodeCanRxMessageFromQueue(const can_rx_message_t *rxMessage, uint8
 {
     for (uint8_t i = Size; i > 0; i--) {
         if (decodeCanRxMessage(rxMessage[i - 1])) {
+            ++m_motorFeedbackSequence; // Track real queue feedback just like the ISR path.
             clearMotorFeedbackErrorCount();
             updateCurrentRevolutions();
             return true;
@@ -1045,4 +1046,196 @@ void MotorLKMG::setBrake(bool isBraked)
         m_motorControlData[6] = 0x00;
         m_motorControlData[7] = 0x00;
     }
+}
+
+/******************************************************************************
+ * LK MG broadcast firmware (V2.35 commands, V2.36 replies)
+ ******************************************************************************/
+MotorLKMGmulti::MotorLKMGmulti(uint8_t motorID, Controller *controller, uint16_t encoderOffset,
+                             uint8_t encoderBits, fp32 gearboxRatio)
+    : Motor(0x280u, 0x180u + motorID, controller, encoderOffset),
+      m_lkMotorID(motorID), m_encoderBits(encoderBits), m_gearboxRatio(gearboxRatio),
+      m_errorState(0), m_motorState(0xFF), m_hasReceivedFeedback(false),
+      m_hasValidMotorStatus(false), m_hasValidErrorStatus(false) {}
+
+MotorLKMGmulti::FeedbackState MotorLKMGmulti::getFeedbackState() const
+{
+    if (!m_hasReceivedFeedback) return FeedbackState::NeverReceived;
+    return Motor::isMotorConected() ? FeedbackState::Online : FeedbackState::Offline;
+}
+
+bool MotorLKMGmulti::isConfigurationValid() const
+{
+    return m_lkMotorID >= 1 && m_lkMotorID <= 4 &&
+           m_encoderBits >= 14 && m_encoderBits <= 16 &&
+           isfinite(m_gearboxRatio) && m_gearboxRatio > 0;
+}
+
+void MotorLKMGmulti::setControlValue(Command command, fp32 value, fp32 lower, fp32 upper)
+{
+    memset(m_motorControlData, 0, sizeof(m_motorControlData));
+    m_motorControlMessageID = static_cast<uint16_t>(command);
+    m_motorControlHeader.StdId = m_motorControlMessageID;
+    if (!isConfigurationValid()) return;
+    if (!isfinite(value)) value = 0;
+    if (value < lower) value = lower;
+    if (value > upper) value = upper;
+    // Round protocol units after clamping, before the narrowing conversion.
+    const uint16_t encoded = static_cast<uint16_t>(static_cast<int16_t>(roundf(value)));
+    const uint8_t offset = (m_lkMotorID - 1) * 2;
+    m_motorControlData[offset] = static_cast<uint8_t>(encoded);
+    m_motorControlData[offset + 1] = static_cast<uint8_t>(encoded >> 8);
+}
+
+void MotorLKMGmulti::convertControllerOutputToMotorControlData()
+{
+    setControlValue(Command::Torque, m_controllerOutput, -2000.0f, 2000.0f);
+}
+
+bool MotorLKMGmulti::hardwareAngularVelocityClosedloopControl(fp32 radiansPerSecond)
+{
+    if (!isConfigurationValid() || !isfinite(radiansPerSecond)) return false;
+    // Output-shaft rad/s; validate in caller coordinates to admit representable endpoints.
+    const fp32 minimum = -32768.0f * (MATH_PI / 180.0f) / m_gearboxRatio;
+    const fp32 maximum = 32767.0f * (MATH_PI / 180.0f) / m_gearboxRatio;
+    if (radiansPerSecond < minimum || radiansPerSecond > maximum) return false;
+    const fp32 degreesPerSecond = radiansPerSecond * m_gearboxRatio * (180.0f / MATH_PI);
+    if (!isfinite(degreesPerSecond)) return false;
+    m_targetAngularVelocity = radiansPerSecond;
+    setControlValue(Command::Speed, degreesPerSecond,
+                    -32768.0f, 32767.0f);
+    return true;
+}
+
+bool MotorLKMGmulti::hardwareAngleClosedloopControl(fp32 radians)
+{
+    if (!isConfigurationValid() || !isfinite(radians)) return false;
+    // Preserve the existing encoder/motor-shaft position convention (no ratio conversion).
+    const fp32 minimum = -32768.0f * (MATH_PI / 18000.0f);
+    const fp32 maximum = 32767.0f * (MATH_PI / 18000.0f);
+    if (radians < minimum || radians > maximum) return false;
+    const fp32 centidegrees = radians * (18000.0f / MATH_PI);
+    if (!isfinite(centidegrees)) return false;
+    m_targetAngle = radians;
+    setControlValue(Command::Position, centidegrees, -32768.0f, 32767.0f);
+    return true;
+}
+
+bool MotorLKMGmulti::setManagementCommand(Management command)
+{
+    switch (command) {
+        case Management::ReadStatus1: case Management::ClearError: case Management::ReadStatus2:
+        case Management::Disable: case Management::Enable: case Management::Stop: break;
+        default: return false;
+    }
+    if (!isConfigurationValid()) return false;
+    setControlValue(Command::Management, static_cast<uint8_t>(command), 0, 255);
+    return true;
+}
+
+bool MotorLKMGmulti::composeControlFrame(MotorLKMGmulti *const *motors, uint8_t count,
+                                        CAN_TxHeaderTypeDef &header, uint8_t (&data)[8])
+{
+    return composeControlFrame(motors, count, header, data, 0, nullptr);
+}
+
+bool MotorLKMGmulti::composeControlFrame(MotorLKMGmulti *const *motors, uint8_t count,
+                                        CAN_TxHeaderTypeDef &header, uint8_t (&data)[8],
+                                        uint8_t expectedMotorMask, ComposeResult *result)
+{
+    const auto fail = [result](ComposeResult reason) {
+        if (result) *result = reason;
+        return false;
+    };
+    if (!motors || count == 0 || count > 4 || (expectedMotorMask & 0xF0))
+        return fail(ComposeResult::InvalidArgument);
+    uint8_t mask = 0;
+    uint32_t id = 0;
+    for (uint8_t i = 0; i < count; ++i) {
+        if (!motors[i]) return fail(ComposeResult::InvalidArgument);
+        if (!motors[i]->isConfigurationValid()) return fail(ComposeResult::InvalidConfiguration);
+        const uint8_t bit = static_cast<uint8_t>(1u << (motors[i]->m_lkMotorID - 1));
+        if (mask & bit) return fail(ComposeResult::DuplicateMotorID);
+        mask |= bit;
+        const uint32_t current = motors[i]->getMotorControlMessageID();
+        if (current != 0x280 && current != 0x281 && current != 0x282 && current != 0x288)
+            return fail(ComposeResult::InvalidCommand);
+        if (i == 0) id = current;
+        if (current != id) return fail(ComposeResult::MixedCommands);
+        if (current == 0x288) {
+            const uint8_t offset = (motors[i]->m_lkMotorID - 1) * 2;
+            const uint8_t command = motors[i]->m_motorControlData[offset];
+            if (motors[i]->m_motorControlData[offset + 1] != 0 ||
+                (command != 0x9A && command != 0x9B && command != 0x9C &&
+                 command != 0x80 && command != 0x88 && command != 0x81))
+                return fail(ComposeResult::InvalidCommand);
+        }
+    }
+    if (expectedMotorMask != 0 && mask != expectedMotorMask)
+        return fail(ComposeResult::IncompleteMotorSet);
+
+    uint8_t merged[8] = {};
+    bool feedbackAvailable = true;
+    for (uint8_t i = 0; i < count; ++i) {
+        // Poll every participant exactly once, even if another motor is offline.
+        const uint8_t *own = motors[i]->getMotorControlData();
+        const uint8_t offset = (motors[i]->m_lkMotorID - 1) * 2;
+        const bool recoveryCommand = id == 0x288 &&
+            (own[offset] == 0x9A || own[offset] == 0x9C ||
+             own[offset] == 0x80 || own[offset] == 0x81);
+        if (motors[i]->getFeedbackState() != FeedbackState::Online && !recoveryCommand)
+            feedbackAvailable = false;
+        merged[offset] = own[offset];
+        merged[offset + 1] = own[offset + 1];
+    }
+    if (!feedbackAvailable) return fail(ComposeResult::FeedbackUnavailable);
+
+    CAN_TxHeaderTypeDef composedHeader{};
+    composedHeader.StdId = id;
+    composedHeader.IDE = CAN_ID_STD;
+    composedHeader.RTR = CAN_RTR_DATA;
+    composedHeader.DLC = 8;
+    header = composedHeader;
+    memcpy(data, merged, sizeof(merged));
+    if (result) *result = ComposeResult::Success;
+    return true;
+}
+
+bool MotorLKMGmulti::decodeCanRxMessage(const can_rx_message_t &message)
+{
+    if (!isConfigurationValid() || message.header.StdId != m_motorFeedbackMessageID ||
+        message.header.IDE != CAN_ID_STD || message.header.RTR != CAN_RTR_DATA ||
+        message.header.DLC != 8) return false;
+    const uint8_t *d = message.data;
+    const auto signedWord = [](uint8_t low, uint8_t high) {
+        const int32_t raw = (uint32_t(high) << 8) | low;
+        return static_cast<int16_t>(raw >= 32768 ? raw - 65536 : raw);
+    };
+    const int8_t temperature = static_cast<int8_t>(d[1] >= 128 ? int(d[1]) - 256 : d[1]);
+    switch (d[0]) {
+        case 0x9C: case 0xA1: case 0xA2: case 0xA3: {
+            m_temperature = temperature;
+            m_currentTorqueCurrent = signedWord(d[2], d[3]);
+            const int16_t speed = signedWord(d[4], d[5]);
+            m_currentAngularVelocity = speed * (MATH_PI / 180.0f) / m_gearboxRatio;
+            const uint32_t resolution = 1u << m_encoderBits;
+            const uint32_t raw = (uint16_t(d[7]) << 8) | d[6];
+            const uint32_t adjusted = (raw + resolution - (m_encoderOffset % resolution)) % resolution;
+            m_currentAngle = adjusted * (2.0f * MATH_PI / resolution);
+        } break;
+        case 0x9A: case 0x9B:
+            m_temperature = temperature;
+            m_motorState = d[6];
+            m_errorState = d[7];
+            m_hasValidMotorStatus = true;
+            m_hasValidErrorStatus = true;
+            break;
+        case 0x80: m_motorState = 0x10; m_hasValidMotorStatus = true; break;
+        case 0x88: m_motorState = 0x00; m_hasValidMotorStatus = true; break;
+        case 0x81: break;
+        default: return false;
+    }
+    m_hasReceivedFeedback = true;
+    memcpy(m_motorFeedbackData, d, sizeof(m_motorFeedbackData));
+    return true;
 }
