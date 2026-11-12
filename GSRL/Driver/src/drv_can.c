@@ -48,7 +48,7 @@ static CAN_TypeDef *const canInstances[2] = {
 };
 
 /* Function prototypes -----------------------------------------------*/
-static HAL_StatusTypeDef can_all_pass_filter_init(CAN_HandleTypeDef *hcan);
+static void can_all_pass_filter_init(CAN_HandleTypeDef *hcan);
 
 /* User code ---------------------------------------------------------*/
 
@@ -59,7 +59,6 @@ static HAL_StatusTypeDef can_all_pass_filter_init(CAN_HandleTypeDef *hcan);
  */
 static CAN_Manage_Object_t *CAN_Get_Object(CAN_HandleTypeDef *hcan)
 {
-    if (hcan == NULL || hcan->Instance == NULL) return NULL;
     for (int i = 0; i < 2; i++) {
         if (hcan->Instance == canInstances[i]) {
             return &s_can_manage_objects[i];
@@ -73,36 +72,27 @@ static CAN_Manage_Object_t *CAN_Get_Object(CAN_HandleTypeDef *hcan)
  * @param hcan CAN句柄
  * @param rxCallbackFunction 处理回调函数
  */
-HAL_StatusTypeDef CAN_Init(CAN_HandleTypeDef *hcan, CAN_Call_Back rxCallbackFunction)
+void CAN_Init(CAN_HandleTypeDef *hcan, CAN_Call_Back rxCallbackFunction)
 {
     // 找到对应的CAN管理对象并设置参数
     CAN_Manage_Object_t *can_obj = CAN_Get_Object(hcan);
-    if (can_obj == NULL) return HAL_ERROR;
+    if (can_obj == NULL) return;
 
     can_obj->hcan               = hcan;
     can_obj->rxCallbackFunction = rxCallbackFunction;
 
-    // 接收中断可能在启用通知后立即触发, 必须先创建队列。
-    if (is_queue_initialized == false) {
-        canRxQueueHandle     = osMessageQueueNew(16, sizeof(can_rx_message_t), &canRxQueue_attributes);
-        // 分配失败时不启动接收, 保持未初始化状态以允许后续重试。
-        if (canRxQueueHandle == NULL) return HAL_ERROR;
-        is_queue_initialized = true;
-    }
-
     // 初始化滤波器
-    HAL_StatusTypeDef status = can_all_pass_filter_init(hcan);
-    if (status != HAL_OK) return status;
+    can_all_pass_filter_init(hcan);
 
     // 启动CAN
-    status = HAL_CAN_Start(hcan);
-    if (status != HAL_OK) return status;
-    status = HAL_CAN_ActivateNotification(hcan, CAN_IT_RX_FIFO0_MSG_PENDING);
-    if (status != HAL_OK) {
-        // 初始化未完成, 尽力撤销启动; 保留原始失败状态供调用方停止发送。
-        (void)HAL_CAN_Stop(hcan);
+    HAL_CAN_Start(hcan);
+    HAL_CAN_ActivateNotification(hcan, CAN_IT_RX_FIFO0_MSG_PENDING);
+
+    // 确保队列只初始化一次
+    if (is_queue_initialized == false) {
+        canRxQueueHandle     = osMessageQueueNew(16, sizeof(can_rx_message_t), &canRxQueue_attributes);
+        is_queue_initialized = true;
     }
-    return status;
 }
 
 /**
@@ -114,8 +104,7 @@ HAL_StatusTypeDef CAN_Init(CAN_HandleTypeDef *hcan, CAN_Call_Back rxCallbackFunc
  */
 HAL_StatusTypeDef CAN_Send_Data(CAN_HandleTypeDef *hcan, CAN_TxHeaderTypeDef *pTxHeader, uint8_t *pTxData)
 {
-    uint32_t mailbox;
-    return HAL_CAN_AddTxMessage(hcan, pTxHeader, pTxData, &mailbox);
+    return HAL_CAN_AddTxMessage(hcan, pTxHeader, pTxData, NULL);
 }
 
 /**
@@ -124,7 +113,7 @@ HAL_StatusTypeDef CAN_Send_Data(CAN_HandleTypeDef *hcan, CAN_TxHeaderTypeDef *pT
  * @param None
  * @retval None
  */
-static HAL_StatusTypeDef can_all_pass_filter_init(CAN_HandleTypeDef *hcan)
+static void can_all_pass_filter_init(CAN_HandleTypeDef *hcan)
 {
     CAN_FilterTypeDef can_filter_st    = {0}; // 全通过滤器
     can_filter_st.FilterMode           = CAN_FILTERMODE_IDMASK;
@@ -142,10 +131,10 @@ static HAL_StatusTypeDef can_all_pass_filter_init(CAN_HandleTypeDef *hcan)
     } else if (hcan->Instance == CAN2) {
         can_filter_st.FilterBank = 14;
     } else {
-        return HAL_ERROR;
+        return;
     }
 
-    return HAL_CAN_ConfigFilter(hcan, &can_filter_st);
+    HAL_CAN_ConfigFilter(hcan, &can_filter_st);
 }
 
 /**
@@ -156,12 +145,8 @@ static HAL_StatusTypeDef can_all_pass_filter_init(CAN_HandleTypeDef *hcan)
  */
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 {
-    if (CAN_Get_Object(hcan) == NULL || canRxQueueHandle == NULL) return;
-    can_rx_message_t s_rx_msg = {0};
+    can_rx_message_t s_rx_msg;
     if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &s_rx_msg.header, s_rx_msg.data) == HAL_OK) {
-        s_rx_msg.receivedAtMs = HAL_GetTick();
-        s_rx_msg.receivedAtValid = 1;
-        s_rx_msg.sourceBus = hcan->Instance == CAN1 ? 1 : 2;
 
         // 1. 使用队列保存接收数据（保持原有功能）
         BaseType_t xHigherPriorityTaskWoken = pdFALSE;
