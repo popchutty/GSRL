@@ -33,6 +33,10 @@ typedef struct
 {
     CAN_RxHeaderTypeDef header;
     uint8_t data[8];
+    // ISR从FIFO取出帧时的HAL毫秒时间, 随队列复制; 不是解析任务的时间。
+    uint32_t receivedAtMs;
+    uint8_t receivedAtValid;
+    uint8_t sourceBus; // 1=CAN1, 2=CAN2; 使用共享队列时先按总线分流。
 } can_rx_message_t;
 
 /**
@@ -57,7 +61,8 @@ extern CAN_Manage_Object_t s_can_manage_objects[2]; // CAN管理对象
 /* Exported macro ------------------------------------------------------------*/
 
 /* Exported functions prototypes ---------------------------------------------*/
-void CAN_Init(CAN_HandleTypeDef *hcan, CAN_Call_Back rxCallbackFunction);
+// 启动阶段顺序调用; 不支持并发初始化/运行中重新注册回调。调用者必须检查返回值。
+HAL_StatusTypeDef CAN_Init(CAN_HandleTypeDef *hcan, CAN_Call_Back rxCallbackFunction);
 HAL_StatusTypeDef CAN_Send_Data(CAN_HandleTypeDef *hcan, CAN_TxHeaderTypeDef *pTxHeader, uint8_t *pTxData);
 
 /* Defines -----------------------------------------------------------*/

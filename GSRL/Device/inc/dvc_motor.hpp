@@ -69,18 +69,18 @@ public:
     uint32_t getMotorControlMessageID() const;  // 发给电机的控制报文 ID
     uint32_t getMotorFeedbackMessageID() const; // 电机回复的反馈报文 ID
     const CAN_TxHeaderTypeDef *getMotorControlHeader() const;
-    const uint8_t *getMotorControlData();
-    bool decodeCanRxMessageFromQueue(const can_rx_message_t *rxMessage, uint8_t Size);
+    virtual const uint8_t *getMotorControlData();
+    virtual bool decodeCanRxMessageFromQueue(const can_rx_message_t *rxMessage, uint8_t Size);
     bool decodeCanRxMessageFromISR(const can_rx_message_t *rxMessage);
     const uint8_t *getMotorFeedbackData() const;
     // 获取当前状态相关
     fp32 getCurrentAngle() const;
     fp32 getCurrentAngularVelocity() const;
-    void resetCurrentRevolutionsToZero();
+    virtual void resetCurrentRevolutionsToZero();
     fp32 getCurrentRevolutions() const;
     int16_t getCurrentTorqueCurrent() const;
     int8_t getTemperature() const;
-    bool isMotorConected() const;
+    virtual bool isMotorConected() const;
     // 设置目标状态相关
     void setTargetAngle(fp32 targetAngle);
     void setTargetAngularVelocity(fp32 targetAngularVelocity);
@@ -105,7 +105,7 @@ protected:
     Motor(uint32_t canControlID, uint32_t canFeedbackID, Controller *controller, uint16_t encoderOffset = 0);
     virtual bool decodeCanRxMessage(const can_rx_message_t &rxMessage) = 0;
     virtual void convertControllerOutputToMotorControlData()           = 0;
-    fp32 updateCurrentRevolutions();
+    virtual fp32 updateCurrentRevolutions();
     inline void increaseMotorFeedbackErrorCount();
     inline void clearMotorFeedbackErrorCount();
     inline void applyControllerOutputPostProcess();
@@ -266,7 +266,7 @@ protected:
 
 /**
  * @brief 瓴控广播模式(一控四)电机类
- * @details 该类实现了Motor类的纯虚函数，用于控制开启"广播模式"的瓴控MF/MG系列电机
+ * @details 该类实现了Motor类的纯虚函数，用于控制开启"广播模式"的瓴控MF/MG/MS系列电机
  * @details 广播模式以帧ID区分命令类型, 一帧同时携带4个电机的控制量, 每个电机占2字节, 低字节在前
  * @note 使用前需在瓴控上位机中开启广播模式, 波特率设置为500Kbps或1Mbps, 电机ID只能为1~4
  * @note 控制帧: 0x280力矩 / 0x281速度 / 0x282位置 / 0x288混合命令, 详见LKBroadcastFrameID
@@ -275,13 +275,18 @@ protected:
  *       力矩帧中代表0力矩, 速度帧中代表0速度, 位置帧中代表转到0°位置, 混合命令帧中代表无命令。
  *       因此同一帧内的电机必须处于同一种控制模式, 位置模式下必须为总线上所有电机设置目标
  * @note 命令最大发送频率: 500Kbps下约600Hz, 1Mbps下约1.2KHz(4个电机)
- * @note 广播模式不支持抱闸器命令, MS系列电机(开环电压范围±850)不在本类支持范围内
+ * @note 广播模式不支持抱闸器命令; MS系列必须显式选择MS, 0x280为开环电压(±850)
  * @note 控制、合帧和发送需在同一个任务中依次完成, 合帧得到的数据与getMotorControlHeader()的帧ID才能对应
  * @note 反馈数据在CAN接收中断中更新, 与本库其他电机类相同, 任务中读取到的各状态量不保证来自同一帧
  */
 class MotorLKBroadcast : public Motor
 {
 public:
+    enum LKMotorFamily : uint8_t {
+        MF_MG = 0, // 0x280为力矩电流控制量, ±2000
+        MS    = 1  // 0x280为开环电压控制量, ±850; 状态2反馈为功率原始值
+    };
+
     /**
      * @brief 广播模式控制帧ID, 帧ID即命令类型
      */
@@ -309,7 +314,7 @@ public:
      */
     enum LKFeedbackBaseID : uint32_t {
         FEEDBACK_BASE_0x140 = 0x140, // 回复ID = 0x140 + ID, 与本库MotorLKMG一致
-        FEEDBACK_BASE_0x180 = 0x180  // 回复ID = 0x180 + ID, 协议V2.36
+        FEEDBACK_BASE_0x180 = 0x180  // 仅在匹配固件文档/配置及实测回复为0x180+ID时使用
     };
 
     /**
@@ -338,12 +343,13 @@ public:
 protected:
     static constexpr uint8_t m_maxMotorID         = 4;          // 广播模式电机ID上限
     static constexpr int16_t m_torqueLimit        = 2000;       // MF/MG电机力矩控制量限幅
-    static constexpr int16_t m_int16Limit         = 32767;      // 速度、位置控制量对称限幅
+    static constexpr int16_t m_voltageLimit      = 850;        // MS电机开环电压控制量限幅
     static constexpr uint32_t m_invalidFeedbackID = 0xFFFFFFFF; // 电机ID非法时的反馈ID, 不会与任何标准帧匹配
     static constexpr uint8_t m_motorStateOn       = 0x00;       // 状态1中电机开启状态字节
     static constexpr uint8_t m_motorStateOff      = 0x10;       // 状态1中电机关闭状态字节
 
     uint8_t m_lkMotorID;        // 瓴控电机ID [1,4]
+    LKMotorFamily m_motorFamily; // 决定0x280限幅及状态2输出反馈含义
     bool m_isMotorIDValid;      // 电机ID是否合法, 非法时不写控制数据、不解析反馈
     uint8_t m_dataOffset;       // 本电机在广播帧数据段中的槽位起始下标 0/2/4/6
     uint16_t m_encoderRaw;      // 编码器原始值
@@ -357,8 +363,32 @@ protected:
     bool m_isLastMergeComplete; // 最近一次合帧是否写入了全部参与电机
     uint8_t m_mergedData[8];    // getMergedControlData 输出缓冲区
 
+    // 时间单位ms, 使用HAL单调时基; 原始数值保留历史值, 有效性须单独查询。
+    uint32_t m_lastFeedbackMs = 0;
+    uint32_t m_lastState1Ms = 0;
+    uint32_t m_lastState2Ms = 0;
+    uint32_t m_lastMotorStateMs = 0;
+    bool m_hasFeedback = false;
+    bool m_hasState1 = false;
+    bool m_hasState2 = false;
+    bool m_hasMotorState = false;
+    bool m_positionPending = false;
+    bool m_revolutionsValid = false;
+
 public:
-    MotorLKBroadcast(uint8_t lkMotorID, Controller *controller, uint16_t encoderOffset = 0, fp32 gearboxRatio = 1.0f, LKFeedbackBaseID feedbackBaseID = FEEDBACK_BASE_0x140, LKEncoderResolution encoderResolution = ENCODER_16BIT);
+    MotorLKBroadcast(uint8_t lkMotorID, Controller *controller, uint16_t encoderOffset = 0, fp32 gearboxRatio = 1.0f, LKFeedbackBaseID feedbackBaseID = FEEDBACK_BASE_0x140, LKEncoderResolution encoderResolution = ENCODER_16BIT, LKMotorFamily motorFamily = MF_MG);
+    const uint8_t *getMotorControlData() override;
+    bool decodeCanRxMessageFromQueue(const can_rx_message_t *rxMessage, uint8_t Size) override;
+    bool isMotorConected() const override;
+    bool isState1Fresh(uint32_t maxAgeMs = 1000) const;
+    bool isState2Fresh(uint32_t maxAgeMs = 100) const;
+    bool isMotorStateKnown(uint32_t maxAgeMs = 1000) const;
+    bool isRevolutionsValid() const;
+    void resetCurrentRevolutionsToZero() override;
+    // 显式声明总线上所有参与ID; 一次拷贝帧头和数据, 失败时禁止发送。
+    // 与反馈解码/控制更新共用任务, 或由调用者在临界区内调用。
+    static bool buildControlFrame(MotorLKBroadcast *const motors[], uint8_t count, uint8_t activeMask,
+                                  CAN_TxHeaderTypeDef &header, uint8_t (&data)[8]);
     void hardwareAngularVelocityClosedloopControl();
     void hardwareAngularVelocityClosedloopControl(fp32 targetAngularVelocity);
     void hardwareAngleClosedloopControl(fp32 targetAngle);
@@ -369,17 +399,23 @@ public:
     bool isLastMergeComplete() const { return m_isLastMergeComplete; }
     uint8_t getMotorID() const { return m_lkMotorID; }
     bool isMotorIDValid() const { return m_isMotorIDValid; }
+    LKMotorFamily getMotorFamily() const { return m_motorFamily; }
+    bool isMotorFamilyValid() const { return m_motorFamily == MF_MG || m_motorFamily == MS; }
+    // 状态2 D[2:3]: MF/MG为iq原始值, MS为power原始值(-1000~1000), 均非安培。
+    // 使用前检查isState2Fresh(); 继承的getCurrentTorqueCurrent()仍返回同一原始字段。
+    int16_t getOutputFeedbackRaw() const { return m_currentTorqueCurrent; }
     uint8_t getErrorState() const { return m_errorState; }
     fp32 getBusVoltage() const { return m_busVoltage; }
     fp32 getBusCurrent() const { return m_busCurrent; }
-    bool isMotorOn() const { return m_motorState == m_motorStateOn; }
+    bool isMotorOn() const { return isMotorStateKnown() && m_motorState == m_motorStateOn; }
 
 protected:
+    fp32 updateCurrentRevolutions() override;
     bool decodeCanRxMessage(const can_rx_message_t &rxMessage) override;
     void convertControllerOutputToMotorControlData() override;
     void setBroadcastControlData(LKBroadcastFrameID frameID, uint8_t lowByte, uint8_t highByte);
     const uint8_t *mergeControlData(MotorLKBroadcast *const otherMotors[], uint8_t otherMotorCount);
-    static int16_t convertToControlValue(fp32 value, int16_t limit);
+    static int16_t convertToControlValue(fp32 value, int16_t minimum, int16_t maximum);
 };
 
 /* Exported constants --------------------------------------------------------*/
