@@ -88,7 +88,9 @@ static inline uint8_t UART_RingBuffer_IsEmpty(UART_Manage_Object_t *uart_obj) //
  */
 static inline uint16_t UART_RingBuffer_GetLength(UART_Manage_Object_t *uart_obj) // 环形缓冲区里已经存了多少数据
 {
-    return (uint16_t)(uart_obj->rx_head - uart_obj->rx_tail); // 写指针减读指针，得到已有数据量
+    /* 读写指针都是模UART_BUFFER_SIZE后的回绕值，写指针绕过0之后head会小于tail，
+       直接用head-tail会下溢；先加一个容量再取模，才能跨回绕点算出正确长度 */
+    return (uint16_t)((uart_obj->rx_head + UART_BUFFER_SIZE - uart_obj->rx_tail) % UART_BUFFER_SIZE); // 写指针减读指针，得到已有数据量
 }
 
 /**
@@ -186,7 +188,7 @@ uint16_t UART_Read(UART_HandleTypeDef *huart, uint8_t *pData, uint16_t len)
  * @brief HAL库UART接收空闲中断
  * @param huart UART编号
  * @param Size 本次接收到的数据长度
- * @details 将DMA接收到的数据循环写入环形缓冲区（满则丢弃），
+ * @details 将DMA接收到的数据循环写入环形缓冲区（满则丢弃新数据），
  *          再调用原有回调函数（对上层透明），最后重启DMA接收
  */
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) // 哪个串口触发的，以及这次收到了多少数据
@@ -194,7 +196,8 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size) // 哪
     UART_Manage_Object_t *uart_obj = UART_Get_Object(huart);
     if (uart_obj != NULL) {
         uint16_t i;
-        /* 将本次DMA收到的数据逐字节写入环形缓冲区 */
+
+        /* 将本次DMA收到的数据逐字节写入环形缓冲区（字节流缓存，供UART_Read使用） */
         for (i = 0; i < Size; i++) {
             /* 缓冲区满（可用空间为0）时直接丢弃新数据 */
             if (UART_RingBuffer_GetFree(uart_obj) == 0) {

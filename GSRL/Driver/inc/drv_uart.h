@@ -44,7 +44,7 @@ typedef struct
     uint8_t rxBuffer[UART_BUFFER_SIZE];     // DMA接收缓冲区（由HAL直接写入）。串口收到的数据先落到这里，相当于一个"水池"
     uint16_t rxDataLimit;                   // 单次接收长度上限，即"水池"最多装多少水
 
-    /* 环形缓冲区（Ring Buffer） */
+    /* 环形缓冲区（Ring Buffer）：字节流缓存，供UART_Read按字节取用 */
     uint8_t rxRingBuffer[UART_BUFFER_SIZE]; // 环形缓冲区存储区
     volatile uint16_t rx_head;              // 写指针：中断/DMA回调往里写一个，就往前进一步
     volatile uint16_t rx_tail;              // 读指针：应用层读一个，就往前进一步
