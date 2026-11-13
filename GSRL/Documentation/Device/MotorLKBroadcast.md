@@ -1,8 +1,8 @@
 # 瓴控广播模式(一控四)电机驱动使用说明
 
 作者：yuki  
-版本：v1.0.0  
-最后更新日期：2026-11-12  
+版本：v1.1.0  
+最后更新日期：2026-11-13  
 对应协议：《瓴控科技电机 CAN 广播通讯协议 V2.35》《电机 CAN 总线通讯协议 V2.36》
 
 ---
@@ -49,7 +49,7 @@
 | `0x280` 力矩 +25，最长 200 ms | 电机明显转动；80 ms 时转速原始反馈达到 308 dps，被测试程序的转速保护提前结束 |
 | `0x280` 力矩 −25，200 ms | 转速原始反馈峰值 49 dps，位移为负，肉眼未见转动；正反向差异的原因未定位 |
 | 转速反馈对应电机轴还是输出轴 | 未单独测量 |
-| 广播模式开启时发 `0x288` 状态查询 | 无回复；该固件下 `getBusVoltage`、`getErrorState`、`isMotorOn` 不会更新 |
+| 广播模式开启时发 `0x288` 状态查询 | 无回复；该固件下 `getBusVoltage`、`getErrorState`、`isMotorOn` 不会更新，`hasReceivedState1()` 一直为 false |
 | `0x281` 速度、`0x282` 位置 | 未测试 |
 | 四台电机同时运行 | 未测试，合帧只有主机端验证 |
 
@@ -77,7 +77,7 @@
 | 回复命令字节 D[0] | 内容 | 更新的状态 |
 | --- | --- | --- |
 | 0x9C、0xA0~0xA8 | 温度、转矩电流、转速(dps)、编码器 | 角度、角速度、转矩电流、温度 |
-| 0x9A、0x9B | 温度、母线电压、母线电流、电机状态、错误标志 | 温度、`getBusVoltage`、`getBusCurrent`、`isMotorOn`、`getErrorState` |
+| 0x9A、0x9B | 温度、母线电压、母线电流、电机状态、错误标志 | 温度、`getBusVoltage`、`getBusCurrent`、`isMotorOn`、`getErrorState`，并使 `hasReceivedState1()` 变为 true |
 | 0x80、0x88 | 与发送相同 | `isMotorOn` |
 | 0x81 | 与发送相同 | 无，只用于确认电机在线 |
 
@@ -95,15 +95,11 @@
 - **广播帧没有"空槽位"。** 总线上每个在线电机都会执行帧中自己槽位的值，未写入的槽位为 0：
   力矩帧中是 0 力矩，速度帧中是 0 速度，**位置帧中是转到 0° 位置**，混合命令帧中是无命令。
   所以位置模式下必须给总线上所有电机都设置目标。
-- **同一帧内的电机必须处于同一种控制模式。** 每个电机对象的控制帧 ID 由它最后调用的控制方法决定；
-  合帧时以调用者的帧 ID 为准，帧 ID 不一致、ID 非法或重复的电机会被跳过，`isLastMergeComplete()` 返回 false。
-  此时返回的仍是一帧可发送的部分数据，被跳过的电机槽位为 0（ID 重复时保留先写入的值），是否发送由调用者决定。
-  `isLastMergeComplete()` 只表示传入的电机是否全部写入，不表示 4 个槽位齐全，也不表示发送成功。
-- **需要严格校验时使用 `buildControlFrame`。** 它要求用 `activeMask` 声明总线上参与广播控制的全部电机（bit0~bit3 对应 ID 1~4），
-  传入的电机必须与之一一对应且控制模式一致，否则返回 false 并把帧头和数据清零，不会产生部分帧。位置模式建议只用这个接口。
-- **控制、合帧、发送要在同一个任务里依次完成。** 合帧得到的数据和 `getMotorControlHeader()` 的帧 ID 是分两次取的，
-  中间如果有别的任务切换了电机的控制模式，会把旧数据配上新的帧 ID 发出去。
-- **电机 ID 只能是 1~4。** 传入其他值时对象失效：不写入控制数据、不解析反馈、不参与合帧，`isMotorIDValid()` 返回 false。
+- **同一帧内的电机必须处于同一种控制模式。** 每个电机对象的控制帧 ID 由它最后调用的控制方法决定。
+- **用 `buildControlFrame` 合帧。** 用 `activeMask` 声明总线上参与广播控制的全部电机（bit0~bit3 对应 ID 1~4），
+  传入的电机必须与之一一对应且控制模式一致。电机不齐、模式不一致、ID 重复或非法、指针为空时返回 false，
+  并把帧头和数据清零，不会产生部分帧；返回 false 时不要发送。
+  它每个控制周期只调用一次：调用时会触发各电机的掉线检测。
 - **控制量自动限幅。** 力矩限幅到 ±2000，速度、位置限幅到 -32768~32767，NaN 按 0 处理。
   基类各闭环方法的返回值是限幅取整后实际发送的力矩控制量。
 - **硬件位置闭环的范围很小。** 16 位、0.01°/LSB，电机轴角度范围只有 -327.68°~327.67°，带减速箱时输出轴范围还要除以减速比。
@@ -138,6 +134,7 @@ MotorLKBroadcast lk1(1, &pid1, 0, 1.0f, MotorLKBroadcast::FEEDBACK_BASE_0x140, M
 MotorLKBroadcast lk2(2, &pid2, 0, 1.0f, MotorLKBroadcast::FEEDBACK_BASE_0x140, MotorLKBroadcast::ENCODER_16BIT);
 MotorLKBroadcast lk3(3, &pid3, 0, 1.0f, MotorLKBroadcast::FEEDBACK_BASE_0x140, MotorLKBroadcast::ENCODER_16BIT);
 MotorLKBroadcast lk4(4, &pid4, 0, 1.0f, MotorLKBroadcast::FEEDBACK_BASE_0x140, MotorLKBroadcast::ENCODER_16BIT);
+MotorLKBroadcast *const motors[] = {&lk1, &lk2, &lk3, &lk4};
 
 extern "C" void can1RxCallback(can_rx_message_t *pRxMsg)
 {
@@ -158,45 +155,39 @@ extern "C" void chassis_task(void *argument)
         lk4.angularVelocityClosedloopControl(targetSpeed[3]);
 
         // 合帧: 一帧发出4个电机的力矩, 同时触发4个电机的掉线检测
-        const uint8_t *data = lk1.getMergedControlData(lk2, lk3, lk4);
-        if (lk1.isLastMergeComplete()) {
+        // 0x0F: 总线上参与广播控制的电机是 ID1~ID4
+        CAN_TxHeaderTypeDef header;
+        uint8_t data[8];
+        if (MotorLKBroadcast::buildControlFrame(motors, 4, 0x0F, header, data)) {
             uint32_t mailbox;
-            HAL_CAN_AddTxMessage(&hcan1, lk1.getMotorControlHeader(), data, &mailbox);
+            HAL_CAN_AddTxMessage(&hcan1, &header, data, &mailbox);
         }
-        // 合帧不完整说明有电机的控制模式不一致或ID配置错误, 属于程序错误, 这里选择不发送
+        // 返回false说明有电机的控制模式不一致或ID配置错误, 属于程序错误, 不发送
 
         vTaskDelayUntil(&taskLastWakeTime, 2); // 500Hz, 500Kbps和1Mbps下均可用
     }
 }
 ```
 
-电机数量少于 4 个时使用对应的重载：`lk1.getMergedControlData(lk2)`、`lk1.getMergedControlData(lk2, lk3)`。
-只有一个电机时直接使用 `lk1.getMotorControlData()`。
+电机数量少于 4 个时只传实际接入的电机，并让 `activeMask` 与之对应，例如只有 ID1 和 ID2 时传 2 个电机、`0x03`。
 
 ### 5.2 使用电机内置的速度环、位置环
 
 ```cpp
-lk1.hardwareAngularVelocityClosedloopControl(3.14f); // rad/s
-lk2.hardwareAngularVelocityClosedloopControl(-3.14f);
-const uint8_t *data = lk1.getMergedControlData(lk2);  // 帧ID为0x281
-HAL_CAN_AddTxMessage(&hcan1, lk1.getMotorControlHeader(), data, &mailbox);
-```
-
-位置环使用 `hardwareAngleClosedloopControl(targetAngle)`，单位 rad，带符号的绝对位置。
-位置帧中缺失的槽位会让对应电机转向 0° 位置，建议用 `buildControlFrame` 合帧：
-
-```cpp
-lk1.hardwareAngleClosedloopControl(0.5f);
-lk2.hardwareAngleClosedloopControl(-0.5f);
-
-MotorLKBroadcast *motors[] = {&lk1, &lk2};
+MotorLKBroadcast *const motors[] = {&lk1, &lk2};
 CAN_TxHeaderTypeDef header;
 uint8_t data[8];
-// 0x03: 总线上参与广播控制的电机是 ID1 和 ID2
+
+lk1.hardwareAngularVelocityClosedloopControl(3.14f); // rad/s
+lk2.hardwareAngularVelocityClosedloopControl(-3.14f);
+// 0x03: 总线上参与广播控制的电机是 ID1 和 ID2; 帧ID为0x281
 if (MotorLKBroadcast::buildControlFrame(motors, 2, 0x03, header, data)) {
     HAL_CAN_AddTxMessage(&hcan1, &header, data, &mailbox);
 }
 ```
+
+位置环使用 `hardwareAngleClosedloopControl(targetAngle)`，单位 rad，带符号的绝对位置，合帧方式相同（帧 ID 为 0x282）。
+位置帧中缺失的槽位会让对应电机转向 0° 位置，所以 `activeMask` 必须包含总线上的全部电机。
 
 硬件速度、位置模式的目标按减速比换算到电机轴。新版协议 V2.40 把广播速度、位置目标定义在输出轴，
 不同固件可能不一致，使用前先用小目标值在实物上确认转过的角度。
@@ -207,17 +198,18 @@ if (MotorLKBroadcast::buildControlFrame(motors, 2, 0x03, header, data)) {
 // 低频查询状态1: 该周期用混合命令帧代替控制帧
 lk1.setMotorCommand(MotorLKBroadcast::READ_STATE_1);
 lk2.setMotorCommand(MotorLKBroadcast::READ_STATE_1);
-const uint8_t *data = lk1.getMergedControlData(lk2);  // 帧ID为0x288
-HAL_CAN_AddTxMessage(&hcan1, lk1.getMotorControlHeader(), data, &mailbox);
+if (MotorLKBroadcast::buildControlFrame(motors, 2, 0x03, header, data)) { // 帧ID为0x288
+    HAL_CAN_AddTxMessage(&hcan1, &header, data, &mailbox);
+}
 
-// 之后在任意位置读取
-if (lk1.getErrorState() & MotorLKBroadcast::ERROR_STALL) {
+// 之后在任意位置读取; 没收到过状态1回复时错误标志仍是初始值0
+if (lk1.hasReceivedState1() && (lk1.getErrorState() & MotorLKBroadcast::ERROR_STALL)) {
     // 堵转处理
 }
 ```
 
 `setMotorCommand` 之后再次调用任一控制方法，该电机的控制帧 ID 会自动切换回对应的控制帧。
-部分固件在广播模式下不回复混合命令（见第 2 节实测结果），此时错误标志、母线电压和开关状态保持初始值。
+部分固件在广播模式下不回复混合命令（见第 2 节实测结果），此时错误标志、母线电压和开关状态保持初始值，`hasReceivedState1()` 为 false。
 
 ## 6：常见问题
 
@@ -225,7 +217,7 @@ if (lk1.getErrorState() & MotorLKBroadcast::ERROR_STALL) {
 | --- | --- |
 | 电机不动，`isMotorConected()` 为 false | 未开启广播模式；波特率不一致；反馈基地址选错（0x140 / 0x180） |
 | 电机会动但 `isMotorConected()` 为 false | 反馈基地址选错；接收回调中没有调用该电机的解析函数 |
-| `isLastMergeComplete()` 为 false，某个电机不动、执行 0 目标或执行了别的对象的目标 | 该电机与调用者的控制模式不一致；电机 ID 重复或超出 1~4 |
+| `buildControlFrame` 返回 false | 传入的电机控制模式不一致；电机 ID 重复或超出 1~4；传入的电机与 `activeMask` 不一一对应 |
 | 角度只在一小段范围内变化，圈数不累加 | 编码器位数选错 |
 | 进入位置模式后其他电机突然转动 | 位置帧中未设置目标的电机槽位为 0，会转到 0° 位置 |
 | 反馈时断时续 | 发送频率超过协议上限；总线负载过高 |

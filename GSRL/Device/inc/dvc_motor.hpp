@@ -276,8 +276,8 @@ protected:
  *       因此同一帧内的电机必须处于同一种控制模式, 位置模式下必须为总线上所有电机设置目标
  * @note 命令最大发送频率: 500Kbps下约600Hz, 1Mbps下约1.2KHz(4个电机)
  * @note 广播模式不支持抱闸器命令, MS系列电机(开环电压范围±850)不在本类支持范围内
- * @note 控制、合帧和发送需在同一个任务中依次完成, 合帧得到的数据与getMotorControlHeader()的帧ID才能对应
- * @note 位置模式或需要严格校验时使用buildControlFrame(), 参与电机不齐、模式不一致时整帧失败, 不会发出部分帧
+ * @note 发送前用buildControlFrame()合帧: 需声明总线上参与广播的全部电机, 电机不齐、模式不一致或ID有误时整帧失败, 不会发出部分帧
+ * @note 控制、合帧和发送需在同一个任务中依次完成
  * @note 反馈数据在CAN接收中断中更新, 与本库其他电机类相同, 任务中读取到的各状态量不保证来自同一帧
  */
 class MotorLKBroadcast : public Motor
@@ -356,8 +356,7 @@ protected:
     fp32 m_busCurrent;          // 母线电流, 单位A, 由状态1更新
     uint8_t m_motorState;       // 电机状态字节, 0x00开启 0x10关闭
     uint8_t m_errorState;       // 错误标志字节, 由状态1更新
-    bool m_isLastMergeComplete; // 最近一次合帧是否写入了全部参与电机
-    uint8_t m_mergedData[8];    // getMergedControlData 输出缓冲区
+    bool m_hasReceivedState1;   // 是否收到过状态1回复
 
 public:
     MotorLKBroadcast(uint8_t lkMotorID, Controller *controller, uint16_t encoderOffset = 0, fp32 gearboxRatio = 1.0f, LKFeedbackBaseID feedbackBaseID = FEEDBACK_BASE_0x140, LKEncoderResolution encoderResolution = ENCODER_16BIT);
@@ -365,10 +364,6 @@ public:
     void hardwareAngularVelocityClosedloopControl(fp32 targetAngularVelocity);
     void hardwareAngleClosedloopControl(fp32 targetAngle);
     void setMotorCommand(LKBroadcastCommand command);
-    const uint8_t *getMergedControlData(MotorLKBroadcast &otherMotor);
-    const uint8_t *getMergedControlData(MotorLKBroadcast &otherMotor1, MotorLKBroadcast &otherMotor2);
-    const uint8_t *getMergedControlData(MotorLKBroadcast &otherMotor1, MotorLKBroadcast &otherMotor2, MotorLKBroadcast &otherMotor3);
-    bool isLastMergeComplete() const { return m_isLastMergeComplete; }
     static bool buildControlFrame(MotorLKBroadcast *const motors[], uint8_t count, uint8_t activeMask, CAN_TxHeaderTypeDef &header, uint8_t (&data)[8]);
     uint8_t getMotorID() const { return m_lkMotorID; }
     bool isMotorIDValid() const { return m_isMotorIDValid; }
@@ -377,12 +372,13 @@ public:
     fp32 getBusCurrent() const { return m_busCurrent; }
     // 初始值为协议规定的上电默认状态(开启), 不是实测值; 收到状态1或开关命令的回复后才更新
     bool isMotorOn() const { return m_motorState == m_motorStateOn; }
+    // 是否收到过状态1回复; 为false时错误标志、母线电压、母线电流仍是初始值
+    bool hasReceivedState1() const { return m_hasReceivedState1; }
 
 protected:
     bool decodeCanRxMessage(const can_rx_message_t &rxMessage) override;
     void convertControllerOutputToMotorControlData() override;
     void setBroadcastControlData(LKBroadcastFrameID frameID, uint8_t lowByte, uint8_t highByte);
-    const uint8_t *mergeControlData(MotorLKBroadcast *const otherMotors[], uint8_t otherMotorCount);
     static int16_t convertToControlValue(fp32 value, int16_t minimum, int16_t maximum);
 };
 

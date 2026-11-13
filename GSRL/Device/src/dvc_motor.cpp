@@ -1065,7 +1065,7 @@ void MotorLKMG::setBrake(bool isBraked)
  * | 反馈ID   | 基地址+1 | 基地址+2 | 基地址+3 | 基地址+4 |
  * | 数据槽位 | D[0:1] | D[2:3] | D[4:5] | D[6:7] |
  * | 控制ID   | 0x280力矩 / 0x281速度 / 0x282位置 / 0x288混合命令 |
- * @note 电机ID超出范围时该对象失效: 不写入控制数据, 不解析反馈, 不参与合帧,
+ * @note 电机ID超出范围时该对象失效: 不写入控制数据, 不解析反馈, 合帧时整帧失败,
  *       可通过isMotorIDValid()检查
  */
 MotorLKBroadcast::MotorLKBroadcast(uint8_t lkMotorID, Controller *controller, uint16_t encoderOffset, fp32 gearboxRatio, LKFeedbackBaseID feedbackBaseID, LKEncoderResolution encoderResolution)
@@ -1084,8 +1084,7 @@ MotorLKBroadcast::MotorLKBroadcast(uint8_t lkMotorID, Controller *controller, ui
       m_busCurrent(0.0f),
       m_motorState(m_motorStateOn),
       m_errorState(0),
-      m_isLastMergeComplete(false),
-      m_mergedData{}
+      m_hasReceivedState1(false)
 {
     // 基类未初始化的帧头字段, 避免非静态对象发送时读取到不确定的值
     m_motorControlHeader.ExtId              = 0;
@@ -1131,11 +1130,12 @@ bool MotorLKBroadcast::decodeCanRxMessage(const can_rx_message_t &rxMessage)
         } break;
         case READ_STATE_1:
         case CLEAR_ERROR: {
-            m_temperature = (int8_t)rxMessage.data[1];
-            m_busVoltage  = (fp32)(int16_t)((rxMessage.data[3] << 8) | rxMessage.data[2]) * 0.01f;
-            m_busCurrent  = (fp32)(int16_t)((rxMessage.data[5] << 8) | rxMessage.data[4]) * 0.01f;
-            m_motorState  = rxMessage.data[6];
-            m_errorState  = rxMessage.data[7];
+            m_temperature       = (int8_t)rxMessage.data[1];
+            m_busVoltage        = (fp32)(int16_t)((rxMessage.data[3] << 8) | rxMessage.data[2]) * 0.01f;
+            m_busCurrent        = (fp32)(int16_t)((rxMessage.data[5] << 8) | rxMessage.data[4]) * 0.01f;
+            m_motorState        = rxMessage.data[6];
+            m_errorState        = rxMessage.data[7];
+            m_hasReceivedState1 = true;
         } break;
         case MOTOR_OFF:
             m_motorState = m_motorStateOff;
@@ -1223,46 +1223,6 @@ void MotorLKBroadcast::setMotorCommand(LKBroadcastCommand command)
 }
 
 /**
- * @brief 合并两个同控制帧ID的瓴控广播模式电机CAN控制数据, 同时触发双方掉线检测
- * @param otherMotor 另一个同控制帧ID的瓴控广播模式电机
- * @return const uint8_t* 合并后的8字节CAN控制数据, 帧头使用本电机的getMotorControlHeader()
- * @note 返回的指针指向内部缓冲区, 下次调用会覆盖
- * @note 控制帧ID与本电机不一致、电机ID非法或重复的电机会被跳过, 不会覆盖已写入的槽位,
- *       此时isLastMergeComplete()返回false, 返回的仍是可发送的部分帧
- * @note isLastMergeComplete()只表示传入的电机是否全部写入, 不表示4个槽位齐全或发送成功
- */
-const uint8_t *MotorLKBroadcast::getMergedControlData(MotorLKBroadcast &otherMotor)
-{
-    MotorLKBroadcast *const otherMotors[] = {&otherMotor};
-    return mergeControlData(otherMotors, 1);
-}
-
-/**
- * @brief 合并三个同控制帧ID的瓴控广播模式电机CAN控制数据, 同时触发各电机掉线检测
- * @param otherMotor1 第二个电机
- * @param otherMotor2 第三个电机
- * @return const uint8_t* 合并后的8字节CAN控制数据
- */
-const uint8_t *MotorLKBroadcast::getMergedControlData(MotorLKBroadcast &otherMotor1, MotorLKBroadcast &otherMotor2)
-{
-    MotorLKBroadcast *const otherMotors[] = {&otherMotor1, &otherMotor2};
-    return mergeControlData(otherMotors, 2);
-}
-
-/**
- * @brief 合并四个同控制帧ID的瓴控广播模式电机CAN控制数据, 同时触发各电机掉线检测
- * @param otherMotor1 第二个电机
- * @param otherMotor2 第三个电机
- * @param otherMotor3 第四个电机
- * @return const uint8_t* 合并后的8字节CAN控制数据
- */
-const uint8_t *MotorLKBroadcast::getMergedControlData(MotorLKBroadcast &otherMotor1, MotorLKBroadcast &otherMotor2, MotorLKBroadcast &otherMotor3)
-{
-    MotorLKBroadcast *const otherMotors[] = {&otherMotor1, &otherMotor2, &otherMotor3};
-    return mergeControlData(otherMotors, 3);
-}
-
-/**
  * @brief 校验并生成一帧广播控制帧, 任何一项校验不通过则整帧失败
  * @param motors 参与本帧的电机指针数组
  * @param count 数组中的电机数量 [1,4]
@@ -1273,7 +1233,7 @@ const uint8_t *MotorLKBroadcast::getMergedControlData(MotorLKBroadcast &otherMot
  * @return false 校验失败, header和data已被清零, 禁止发送
  * @note 以下情况校验失败: 指针为空、电机ID非法或重复、各电机控制帧ID不一致、电机与activeMask不一一对应
  * @note 位置帧中未写入的槽位代表转到0°位置, 用activeMask声明总线上的全部电机可避免漏传某个电机
- * @note 每个传入的电机调用一次getMotorControlData(), 掉线检测计数与getMergedControlData()一致
+ * @note 每个传入的电机调用一次getMotorControlData(), 同时触发各电机的掉线检测, 每个控制周期只应调用一次
  */
 bool MotorLKBroadcast::buildControlFrame(MotorLKBroadcast *const motors[], uint8_t count, uint8_t activeMask, CAN_TxHeaderTypeDef &header, uint8_t (&data)[8])
 {
@@ -1334,56 +1294,6 @@ void MotorLKBroadcast::setBroadcastControlData(LKBroadcastFrameID frameID, uint8
     m_motorControlHeader.StdId           = frameID;
     m_motorControlData[m_dataOffset]     = lowByte;
     m_motorControlData[m_dataOffset + 1] = highByte;
-}
-
-/**
- * @brief 合并本电机与其他电机的广播帧槽位
- * @param otherMotors 其他电机指针数组
- * @param otherMotorCount 其他电机数量
- * @return const uint8_t* 合并后的8字节CAN控制数据
- * @note 每个参与的电机只调用一次getMotorControlData(), 保证掉线检测计数正确
- * @note 只拷贝各电机自己的槽位, 以本电机的控制帧ID为准
- * @note 该函数仅供内部或派生类调用
- */
-const uint8_t *MotorLKBroadcast::mergeControlData(MotorLKBroadcast *const otherMotors[], uint8_t otherMotorCount)
-{
-    const uint8_t *selfData = getMotorControlData();
-    uint8_t occupiedSlots   = 0; // 已写入槽位的位图, 用于检查电机ID重复
-
-    memset(m_mergedData, 0, sizeof(m_mergedData));
-    m_isLastMergeComplete = m_isMotorIDValid;
-    if (m_isMotorIDValid) {
-        m_mergedData[m_dataOffset]     = selfData[m_dataOffset];
-        m_mergedData[m_dataOffset + 1] = selfData[m_dataOffset + 1];
-        occupiedSlots |= (uint8_t)(1u << (m_dataOffset / 2));
-    }
-
-    for (uint8_t i = 0; i < otherMotorCount; i++) {
-        MotorLKBroadcast *otherMotor = otherMotors[i];
-        // 同一个电机对象重复传入时跳过, 避免重复触发掉线检测
-        bool isRepeated = (otherMotor == this);
-        for (uint8_t j = 0; j < i && !isRepeated; j++) {
-            isRepeated = (otherMotors[j] == otherMotor);
-        }
-        if (isRepeated) {
-            m_isLastMergeComplete = false;
-            continue;
-        }
-
-        const uint8_t *otherData = otherMotor->getMotorControlData();
-        uint8_t otherOffset      = otherMotor->m_dataOffset;
-        uint8_t otherSlot        = (uint8_t)(1u << (otherOffset / 2));
-        if (!otherMotor->m_isMotorIDValid ||
-            otherMotor->m_motorControlMessageID != m_motorControlMessageID ||
-            (occupiedSlots & otherSlot) != 0) {
-            m_isLastMergeComplete = false;
-            continue;
-        }
-        m_mergedData[otherOffset]     = otherData[otherOffset];
-        m_mergedData[otherOffset + 1] = otherData[otherOffset + 1];
-        occupiedSlots |= otherSlot;
-    }
-    return m_mergedData;
 }
 
 /**
