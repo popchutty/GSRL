@@ -375,6 +375,7 @@ public:
     uint8_t getErrorState() const { return m_errorState; }
     fp32 getBusVoltage() const { return m_busVoltage; }
     fp32 getBusCurrent() const { return m_busCurrent; }
+    // 初始值为协议规定的上电默认状态(开启), 不是实测值; 收到状态1或开关命令的回复后才更新
     bool isMotorOn() const { return m_motorState == m_motorStateOn; }
 
 protected:
