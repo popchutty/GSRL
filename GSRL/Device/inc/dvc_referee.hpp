@@ -41,6 +41,12 @@ public:
     static constexpr uint16_t HEADER_CRC8_CMD_SIZE = HEADER_SIZE + CMD_ID_SIZE;
     static constexpr uint32_t RX_TIMEOUT_MS        = 500; // 裁判系统掉线超时阈值(ms)
 
+    /* ======================== 初始化设备枚举 ======================*/
+    enum class Role : uint8_t {
+        ROBOT       = 0,
+        CONTROLLER  = 1,
+    };
+
     /* ======================== 命令ID枚举 ======================== */
     enum class CmdID : uint16_t {
         // 比赛状态类
@@ -323,6 +329,11 @@ public:
         uint8_t userData[112];
     };
 
+    // 0x0302 自定义控制器交互数据 （最大30字节内容）
+    struct CustomControllerData {
+        uint8_t data[30];
+    };
+
     // 0x0303 小地图下发数据 (12字节)
     struct MapCommandData {
         float targetPositionX; // 目标x坐标(m)，发送目标ID时为0
@@ -479,6 +490,9 @@ public:
     };
 
 private:
+    /* ========================== 角色 ========================= */
+    Role m_role;
+
     /* ======================== 解包状态 ======================== */
     struct UnpackContext {
         FrameHeader *header;
@@ -516,6 +530,7 @@ private:
     MapRobotData m_mapRobotData;
     CustomClientData m_customClientData;
     CustomInfoData m_customInfo;
+    CustomControllerData m_customControllerData;
 
     /* ======================== 连接状态 ======================== */
     uint32_t m_uartRxTimestamp;
@@ -524,6 +539,7 @@ private:
     /* ======================== 发送相关 ======================== */
     UART_HandleTypeDef *m_huartCommon;            // 普通链路UART句柄 (115200)
     UART_HandleTypeDef *m_huartImageTransmission; // 图传链路UART句柄 (921600)
+    UART_HandleTypeDef *m_huartClient;            // 自定义控制器→选手端UART句柄 (115200)
     uint8_t m_txBuffer[FRAME_MAX_SIZE];
     uint8_t m_txSeq;
 
@@ -539,6 +555,14 @@ public:
      * @param huartImageTransmission 图传链路UART句柄，默认nullptr
      */
     Referee(UART_HandleTypeDef *huartCommon = nullptr, UART_HandleTypeDef *huartImageTransmission = nullptr);
+
+    /**
+     * @brief 构造函数
+     * @param role 自定义控制器角色，必须传 Role::CONTROLLER
+     * @param huartClient 自定义控制器→选手端UART句柄
+     * @note role参数同时起到重载标签的作用，避免 Referee(&huart) 被误解析成机器人
+     */
+    Referee(Role role, UART_HandleTypeDef *huartClient);
 
     /**
      * @brief 从UART接收中断中逐字节送入数据进行解包
@@ -584,9 +608,9 @@ public:
     const RobotInteractionData &getRobotInteraction() const { return m_robotInteraction; }
     const MapCommandData &getMapCommand() const { return m_mapCommand; }
     const MapRobotData &getMapRobotData() const { return m_mapRobotData; }
-    const CustomClientData &getCustomClientData() const { return m_customClientData; }
+    //const CustomClientData &getCustomClientData() const { return m_customClientData; }
     const CustomInfoData &getCustomInfo() const { return m_customInfo; }
-
+    const CustomControllerData &getCustomControllerData() const { return m_customControllerData; }
     /* ======================== 常用便捷接口 ======================== */
 
     /**
@@ -645,8 +669,10 @@ public:
     HAL_StatusTypeDef sendRobotToRobotData(uint16_t dataCmdID, uint16_t receiverID,
                                            const uint8_t *data, uint16_t dataLength);
     // 发送接口（图传链路）
-    HAL_StatusTypeDef sendCustomController(const uint8_t *data, uint16_t dataLength);
     HAL_StatusTypeDef sendCustomRobotToClient(const uint8_t *data, uint16_t dataLength);
+    // 发送接口（自定义控制器→选手端）
+    HAL_StatusTypeDef sendCustomControllerData(const CustomControllerData &data);
+    HAL_StatusTypeDef sendCustomClientData(const CustomClientData &data);
 };
 
 /* Exported constants --------------------------------------------------------*/

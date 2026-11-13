@@ -34,10 +34,12 @@
 
 /**
  * @brief 构造函数，初始化所有成员变量
+ * @note 本函数用于机器人的裁判系统初始化
  */
 Referee::Referee(UART_HandleTypeDef *huartCommon,
                  UART_HandleTypeDef *huartImageTransmission)
-    : m_unpackCtx{},
+    : m_role(Role::ROBOT),
+      m_unpackCtx{},
       m_rxHeader{},
       m_gameState{},
       m_gameResult{},
@@ -63,16 +65,29 @@ Referee::Referee(UART_HandleTypeDef *huartCommon,
       m_mapRobotData{},
       m_customClientData{},
       m_customInfo{},
+      m_customControllerData{},
       m_uartRxTimestamp(0),
       m_isConnected(false),
       m_huartCommon(huartCommon),
       m_huartImageTransmission(huartImageTransmission),
+      m_huartClient(nullptr),
       m_txBuffer{},
       m_txSeq(0)
 {
     m_unpackCtx.header = &m_rxHeader;
     m_unpackCtx.step   = UnpackStep::HEADER_SOF;
     m_unpackCtx.index  = 0;
+}
+
+/**
+ * @brief 构造函数，初始化所有成员变量
+ * @note 本函数用于自定义控制器的裁判系统初始化
+ */
+Referee::Referee(Role role, UART_HandleTypeDef *huartClient)
+    : Referee(nullptr, nullptr)
+{
+    m_role          = role;
+    m_huartClient   = huartClient;
 }
 
 /**
@@ -231,12 +246,15 @@ void Referee::solveFrameData(const uint8_t *frame)
         case CmdID::MAP_ROBOT_DATA:
             memcpy(&m_mapRobotData, frame + index, sizeof(MapRobotData));
             break;
-        case CmdID::REMOTE_CONTROL:
-            memcpy(&m_customClientData, frame + index, sizeof(CustomClientData));
-            break;
+        //case CmdID::REMOTE_CONTROL:
+        //    memcpy(&m_customClientData, frame + index, sizeof(CustomClientData));
+        //    break;
         case CmdID::CUSTOM_INFO:
             memcpy(&m_customInfo, frame + index, sizeof(CustomInfoData));
             break;
+        case CmdID::CUSTOM_CONTROLLER:
+            memcpy(&m_customControllerData, frame + index, sizeof(CustomControllerData));
+            break;  
         default:
             break;
     }
@@ -532,18 +550,6 @@ HAL_StatusTypeDef Referee::sendCustomInfo(uint16_t receiverID, const uint8_t *da
 }
 
 /**
- * @brief 发送自定义控制器数据
- * @param data 数据指针
- * @param dataLength 数据长度，最大30字节
- * @return HAL_StatusTypeDef HAL_OK发送成功，HAL_ERROR发送失败
- * @note 通过图传链路发送，命令ID 0x0302，频率上限30Hz
- */
-HAL_StatusTypeDef Referee::sendCustomController(const uint8_t *data, uint16_t dataLength)
-{
-    return sendFrame(m_huartImageTransmission, CmdID::CUSTOM_CONTROLLER, data, dataLength);
-}
-
-/**
  * @brief 发送自定义机器人到客户端数据
  * @param data 数据指针
  * @param dataLength 数据长度
@@ -553,4 +559,47 @@ HAL_StatusTypeDef Referee::sendCustomController(const uint8_t *data, uint16_t da
 HAL_StatusTypeDef Referee::sendCustomRobotToClient(const uint8_t *data, uint16_t dataLength)
 {
     return sendFrame(m_huartImageTransmission, CmdID::CUSTOM_ROBOT_TO_CLIENT, data, dataLength);
+}
+
+/**
+ * @brief 发送自定义控制器数据
+ * @param data 数据指针
+ * @return HAL_StatusTypeDef HAL_OK发送成功，HAL_ERROR发送失败
+ * @note 从自定义控制器发送到选手端，命令ID 0x0302，帧率上线为30Hz
+ */
+HAL_StatusTypeDef Referee::sendCustomControllerData(const CustomControllerData &data)
+{
+    static_assert(sizeof(CustomControllerData) == 30, "0x0302 payload must be 30 bytes");
+
+    if (m_role != Role::CONTROLLER) {
+        return HAL_ERROR;
+    }
+
+    return sendFrame(m_huartClient,
+                     CmdID::CUSTOM_CONTROLLER,
+                     reinterpret_cast<const uint8_t *>(&data),
+                     sizeof(data));
+}
+
+/**
+ * @brief 发送自定义控制器键鼠数据到选手端
+ * @param data 自定义控制器发送到选手端的键鼠数据
+ * @return HAL_StatusTypeDef HAL_OK发送成功， HAL_ERROR发送失败
+ * @note 从自定义控制器发送到选手端，命令ID 0x306
+ */
+HAL_StatusTypeDef Referee::sendCustomClientData(const CustomClientData &data)
+{
+    static_assert(sizeof(CustomClientData) == 8, "0x0306 payload must be 8 bytes");
+
+    if (m_role != Role::CONTROLLER) {
+        return HAL_ERROR;
+    }
+
+    CustomClientData txData = data;
+    txData.reserved         = 0;
+
+    return sendFrame(m_huartClient,
+                     CmdID::REMOTE_CONTROL,
+                     reinterpret_cast<const uint8_t *>(&txData),
+                     sizeof(txData));
 }
