@@ -904,14 +904,17 @@ constexpr double degreesPerRadian = 180.0 / static_cast<double>(MATH_PI);
 } // namespace
 
 MotorLKMGBase::MotorLKMGBase(uint32_t controlID, uint8_t motorID, uint8_t maxMotorID, Controller *controller,
-                             uint16_t encoderOffset, uint8_t encoderBits, fp32 gearboxRatio, uint32_t feedbackTimeoutMs)
-    : Motor(controlID, 0x180u + motorID, controller, encoderOffset),
+                             uint16_t encoderOffset, uint8_t encoderBits, fp32 gearboxRatio, uint32_t feedbackTimeoutMs,
+                             FeedbackIdBase feedbackIdBase)
+    : Motor(controlID, static_cast<uint16_t>(feedbackIdBase) + motorID, controller, encoderOffset),
       m_lkMotorID(motorID), m_gearboxRatio(gearboxRatio), m_maxMotorID(maxMotorID),
       m_encoderBits(encoderBits), m_feedbackTimeoutMs(feedbackTimeoutMs) {}
 
 bool MotorLKMGBase::isConfigurationValid() const
 {
     return m_lkMotorID >= 1 && m_lkMotorID <= m_maxMotorID &&
+           (m_motorFeedbackMessageID == 0x140u + m_lkMotorID ||
+            m_motorFeedbackMessageID == 0x180u + m_lkMotorID) &&
            m_encoderBits >= 14 && m_encoderBits <= 16 &&
            isfinite(m_gearboxRatio) && m_gearboxRatio > 0.0f && m_feedbackTimeoutMs > 0;
 }
@@ -1019,9 +1022,9 @@ bool MotorLKMGBase::decodeMotionFeedback(const uint8_t (&data)[8])
 }
 
 MotorLKMG::MotorLKMG(uint8_t lkMotorID, Controller *controller, uint16_t encoderOffset, fp32 gearboxRatio,
-                     uint8_t encoderBits, uint32_t feedbackTimeoutMs)
+                     uint8_t encoderBits, uint32_t feedbackTimeoutMs, FeedbackIdBase feedbackIdBase)
     : MotorLKMGBase(0x140u + lkMotorID, lkMotorID, 32, controller,
-                    encoderOffset, encoderBits, gearboxRatio, feedbackTimeoutMs) {}
+                    encoderOffset, encoderBits, gearboxRatio, feedbackTimeoutMs, feedbackIdBase) {}
 
 bool MotorLKMG::decodeCanRxMessage(const can_rx_message_t &message)
 {
@@ -1174,31 +1177,27 @@ bool MotorLKMG::requestMotionFeedback()
  * @param controller 绑定的控制器
  * @param encoderOffset 编码器零位偏移量，单位为编码器计数
  * @param encoderBits 编码器位数，范围14~16，单圈分辨率为2的encoderBits次方
- * @param gearboxRatio 电机减速比，须为有限正数；速度下发时乘此值，反馈时除以此值
- * @note 初始命令为力矩控制；收到相应回复前，反馈状态与电机、错误状态均未确认。
+ * @param gearboxRatio 电机减速比，须为有限正数；速度反馈时除以此值
+ * @param feedbackIdBase 实际回复基址，0x140或0x180；默认0x180保留已有调用行为
+ * @note 仅支持力矩控制；收到A1回复前，运动反馈状态未确认。
  */
 MotorLKMGmulti::MotorLKMGmulti(uint8_t motorID, Controller *controller, uint16_t encoderOffset,
-                               uint8_t encoderBits, fp32 gearboxRatio, uint32_t feedbackTimeoutMs)
-    : MotorLKMGBase(0x280u, motorID, 4, controller, encoderOffset, encoderBits, gearboxRatio, feedbackTimeoutMs),
-      m_errorState(0), m_motorState(0xFF), m_hasValidMotorStatus(false), m_hasValidErrorStatus(false) {}
+                               uint8_t encoderBits, fp32 gearboxRatio, uint32_t feedbackTimeoutMs,
+                               FeedbackIdBase feedbackIdBase)
+    : MotorLKMGBase(0x280u, motorID, 4, controller, encoderOffset, encoderBits, gearboxRatio, feedbackTimeoutMs,
+                    feedbackIdBase) {}
 
 /**
  * @brief 将控制值写入本机对应的广播槽位，其余槽位清零
- * @param command 广播控制类型，同时决定控制CAN ID
  * @param value 已换算为协议单位的控制值，非有限值按0处理
- * @param lower 协议控制值下限
- * @param upper 协议控制值上限
- * @note 配置无效时仅更新命令ID并清空数据，不写入控制值。
+ * @note 控制值限幅至-2000~2000；配置无效时清空数据，不写入控制值。
  */
-void MotorLKMGmulti::setControlValue(Command command, fp32 value, fp32 lower, fp32 upper)
+void MotorLKMGmulti::setControlValue(fp32 value)
 {
     memset(m_motorControlData, 0, sizeof(m_motorControlData));
-    m_motorControlMessageID = static_cast<uint16_t>(command);
-    m_motorControlHeader.StdId = m_motorControlMessageID;
     if (!isConfigurationValid()) return;
     if (!isfinite(value)) value = 0;
-    if (value < lower) value = lower;
-    if (value > upper) value = upper;
+    GSRLMath::constrain(value, 2000.0f);
     // 按协议单位限幅并四舍五入，再编码为16位补码，以小端字节序写入本机槽位。
     const uint16_t encoded = static_cast<uint16_t>(static_cast<int16_t>(roundf(value)));
     const uint8_t offset = (m_lkMotorID - 1) * 2;
@@ -1212,65 +1211,14 @@ void MotorLKMGmulti::setControlValue(Command command, fp32 value, fp32 lower, fp
  */
 void MotorLKMGmulti::convertControllerOutputToMotorControlData()
 {
-    setControlValue(Command::Torque, m_controllerOutput, -2000.0f, 2000.0f);
+    setControlValue(m_controllerOutput);
 }
 
-/**
- * @brief 设置广播速度闭环目标
- * @param radiansPerSecond 输出轴目标角速度，单位rad/s
- * @return true 目标已编码；false 配置无效、输入非有限或超出16位有符号速度范围
- * @note 协议单位为1度每秒，量化前四舍五入；失败时保留原控制数据。
- */
-bool MotorLKMGmulti::hardwareAngularVelocityClosedloopControl(fp32 radiansPerSecond)
+bool MotorLKMGmulti::hardwareTorqueCurrentClosedloopControl(int16_t rawCurrent)
 {
-    if (!isConfigurationValid() || !isfinite(radiansPerSecond)) return false;
-    // 先以输出轴rad/s校验范围，保留协议可表示的端点；再乘减速比换算为电机轴度每秒。
-    const fp32 minimum = -32768.0f * (MATH_PI / 180.0f) / m_gearboxRatio;
-    const fp32 maximum = 32767.0f * (MATH_PI / 180.0f) / m_gearboxRatio;
-    if (radiansPerSecond < minimum || radiansPerSecond > maximum) return false;
-    const fp32 degreesPerSecond = radiansPerSecond * m_gearboxRatio * (180.0f / MATH_PI);
-    if (!isfinite(degreesPerSecond)) return false;
-    m_targetAngularVelocity = radiansPerSecond;
-    setControlValue(Command::Speed, degreesPerSecond,
-                    -32768.0f, 32767.0f);
-    return true;
-}
-
-/**
- * @brief 设置广播位置闭环目标
- * @param radians 电机轴绝对目标角度，单位rad，对应-327.68~327.67度
- * @return true 目标已编码；false 配置无效、输入非有限或超出协议范围
- * @note 协议单位为0.01度，量化前四舍五入；失败时保留原控制数据。
- */
-bool MotorLKMGmulti::hardwareAngleClosedloopControl(fp32 radians)
-{
-    if (!isConfigurationValid() || !isfinite(radians)) return false;
-    // 位置沿用编码器所在电机轴的角度定义，不换算减速比；rad乘18000/PI得到0.01度。
-    const fp32 minimum = -32768.0f * (MATH_PI / 18000.0f);
-    const fp32 maximum = 32767.0f * (MATH_PI / 18000.0f);
-    if (radians < minimum || radians > maximum) return false;
-    const fp32 centidegrees = radians * (18000.0f / MATH_PI);
-    if (!isfinite(centidegrees)) return false;
-    m_targetAngle = radians;
-    setControlValue(Command::Position, centidegrees, -32768.0f, 32767.0f);
-    return true;
-}
-
-/**
- * @brief 设置本机的广播管理命令
- * @param command 状态查询、清错、关闭、使能或停机命令
- * @return true 命令已编码；false 命令不支持或配置无效，保留原控制数据
- * @note 命令写入本机槽位低字节，高字节为0；清错与使能仍须在线才能组帧。
- */
-bool MotorLKMGmulti::setManagementCommand(Management command)
-{
-    switch (command) {
-        case Management::ReadStatus1: case Management::ClearError: case Management::ReadStatus2:
-        case Management::Disable: case Management::Enable: case Management::Stop: break;
-        default: return false;
-    }
-    if (!isConfigurationValid()) return false;
-    setControlValue(Command::Management, static_cast<uint8_t>(command), 0, 255);
+    if (!isConfigurationValid() || rawCurrent < -2000 || rawCurrent > 2000) return false;
+    m_targetTorqueCurrent = rawCurrent;
+    setControlValue(rawCurrent);
     return true;
 }
 
@@ -1284,7 +1232,7 @@ bool MotorLKMGmulti::composeControlFrame(MotorLKMGmulti *const *motors, uint8_t 
                                         CAN_TxHeaderTypeDef &header, uint8_t (&data)[8],
                                         uint8_t expectedMotorMask, ComposeResult *result)
 {
-    // 失败原因依次覆盖：参数非法、配置无效、ID重复、命令非法、控制类型混用、集合不符、反馈不可用。
+    // 检查参数、配置、ID、命令和电机集合；不使用反馈状态限制发送。
     // 所有检查通过后才写入输出报文头和数据，调用方只能在返回true时发送。
     const auto fail = [result](ComposeResult reason) {
         if (result) *result = reason;
@@ -1293,27 +1241,14 @@ bool MotorLKMGmulti::composeControlFrame(MotorLKMGmulti *const *motors, uint8_t 
     if (!motors || count == 0 || count > 4 || (expectedMotorMask & 0xF0))
         return fail(ComposeResult::InvalidArgument);
     uint8_t mask = 0;
-    uint32_t id = 0;
     for (uint8_t i = 0; i < count; ++i) {
         if (!motors[i]) return fail(ComposeResult::InvalidArgument);
         if (!motors[i]->isConfigurationValid()) return fail(ComposeResult::InvalidConfiguration);
         const uint8_t bit = static_cast<uint8_t>(1u << (motors[i]->m_lkMotorID - 1));
         if (mask & bit) return fail(ComposeResult::DuplicateMotorID);
         mask |= bit;
-        const uint32_t current = motors[i]->getMotorControlMessageID();
-        if (current != 0x280 && current != 0x281 && current != 0x282 && current != 0x288)
+        if (motors[i]->getMotorControlMessageID() != 0x280)
             return fail(ComposeResult::InvalidCommand);
-        if (i == 0) id = current;
-        if (current != id) return fail(ComposeResult::MixedCommands);
-        // 管理帧允许各电机使用不同管理命令，但每个槽位的高字节须为0，低字节须为支持的命令。
-        if (current == 0x288) {
-            const uint8_t offset = (motors[i]->m_lkMotorID - 1) * 2;
-            const uint8_t command = motors[i]->m_motorControlData[offset];
-            if (motors[i]->m_motorControlData[offset + 1] != 0 ||
-                (command != 0x9A && command != 0x9B && command != 0x9C &&
-                 command != 0x80 && command != 0x88 && command != 0x81))
-                return fail(ComposeResult::InvalidCommand);
-        }
     }
     if (expectedMotorMask != 0 && mask != expectedMotorMask)
         return fail(ComposeResult::IncompleteMotorSet);
@@ -1322,20 +1257,12 @@ bool MotorLKMGmulti::composeControlFrame(MotorLKMGmulti *const *motors, uint8_t 
     for (uint8_t i = 0; i < count; ++i) {
         const uint8_t *own = motors[i]->m_motorControlData;
         const uint8_t offset = (motors[i]->m_lkMotorID - 1) * 2;
-        // 查询、关闭和停止允许在断线时发送；运动控制另外要求近期有运动采样。
-        const bool recoveryCommand = id == 0x288 &&
-            (own[offset] == 0x9A || own[offset] == 0x9C ||
-             own[offset] == 0x80 || own[offset] == 0x81);
-        if (!recoveryCommand) {
-            const bool ready = id == 0x288 ? motors[i]->isMotorConected() : motors[i]->hasFreshMotionFeedback();
-            if (!ready) return fail(ComposeResult::FeedbackUnavailable);
-        }
         merged[offset] = own[offset];
         merged[offset + 1] = own[offset + 1];
     }
 
     CAN_TxHeaderTypeDef composedHeader{};
-    composedHeader.StdId = id;
+    composedHeader.StdId = 0x280;
     composedHeader.IDE = CAN_ID_STD;
     composedHeader.RTR = CAN_RTR_DATA;
     composedHeader.DLC = 8;
@@ -1347,28 +1274,6 @@ bool MotorLKMGmulti::composeControlFrame(MotorLKMGmulti *const *motors, uint8_t 
 
 bool MotorLKMGmulti::decodeCanRxMessage(const can_rx_message_t &message)
 {
-    const uint8_t *d = message.data;
-    switch (d[0]) {
-        case 0x9C: case 0xA1: case 0xA2: case 0xA3:
-            return decodeMotionFeedback(message.data);
-        case 0x9A: case 0x9B:
-            m_temperature = signedTemperature(d[1]);
-            m_motorState = d[6];
-            m_errorState = d[7];
-            m_hasValidMotorStatus = true;
-            m_hasValidErrorStatus = true;
-            return true;
-        case 0x80: case 0x88: case 0x81:
-            // V2.36 将管理命令原样回显，D[1..7] 为保留的零字节。
-            for (uint8_t i = 1; i < 8; ++i) {
-                if (d[i] != 0) return false;
-            }
-            if (d[0] != 0x81) {
-                m_motorState = d[0] == 0x80 ? 0x10 : 0x00;
-                m_hasValidMotorStatus = true;
-            }
-            return true;
-        default:
-            return false;
-    }
+    if (message.data[0] != 0xA1) return false;
+    return decodeMotionFeedback(message.data);
 }
