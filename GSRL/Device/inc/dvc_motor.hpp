@@ -35,7 +35,7 @@ protected:
     // 通信
     uint32_t m_motorControlMessageID;         // 电机CAN控制消息ID
     uint32_t m_motorFeedbackMessageID;        // 电机CAN反馈消息ID
-    CAN_TxHeaderTypeDef m_motorControlHeader; // 电机CAN控制消息头
+    CAN_TxHeaderTypeDef m_motorControlHeader{}; // 电机CAN控制消息头
     uint8_t m_motorControlData[8];            // 电机CAN控制数据
     uint8_t m_motorFeedbackData[8];           // 电机CAN反馈数据
     uint8_t m_motorFeedbackSequence;          // 电机反馈数据序号, 用于中断接收离线判断
@@ -44,9 +44,9 @@ protected:
     fp32 m_currentAngle;           // rad [0, 2PI)
     fp32 m_lastAngle;              // rad [0, 2PI)
     fp32 m_currentAngularVelocity; // rad/s
-    int16_t m_roundCount;          // 整圈数，用于计算小数圈数
+    int32_t m_roundCount;          // 整圈数，用于计算小数圈数
     fp32 m_zeroAngle;              // 零位角度，用于计算小数圈数
-    fp32 m_currentRevolutions;     // 小数圈数 n*2pi(rad)
+    fp32 m_currentRevolutions;     // 圈数（1.0 表示一整圈）
     int16_t m_currentTorqueCurrent;
     int8_t m_temperature; // ℃
     uint8_t m_motorFeedbackErrorCount;
@@ -54,7 +54,7 @@ protected:
     // 目标状态
     fp32 m_targetAngle;           // rad [0, 2PI)
     fp32 m_targetAngularVelocity; // rad/s
-    fp32 m_targetRevolutions;     // 圈n*2pi(rad)
+    fp32 m_targetRevolutions;     // 圈数
     int16_t m_targetTorqueCurrent;
     // 控制器
     Controller *m_controller; // 符合 Controller 接口的控制器
@@ -69,18 +69,18 @@ public:
     uint32_t getMotorControlMessageID() const;  // 发给电机的控制报文 ID
     uint32_t getMotorFeedbackMessageID() const; // 电机回复的反馈报文 ID
     const CAN_TxHeaderTypeDef *getMotorControlHeader() const;
-    const uint8_t *getMotorControlData();
-    bool decodeCanRxMessageFromQueue(const can_rx_message_t *rxMessage, uint8_t Size);
-    bool decodeCanRxMessageFromISR(const can_rx_message_t *rxMessage);
+    virtual const uint8_t *getMotorControlData();
+    virtual bool decodeCanRxMessageFromQueue(const can_rx_message_t *rxMessage, uint8_t Size);
+    virtual bool decodeCanRxMessageFromISR(const can_rx_message_t *rxMessage);
     const uint8_t *getMotorFeedbackData() const;
     // 获取当前状态相关
     fp32 getCurrentAngle() const;
     fp32 getCurrentAngularVelocity() const;
-    void resetCurrentRevolutionsToZero();
+    virtual void resetCurrentRevolutionsToZero();
     fp32 getCurrentRevolutions() const;
     int16_t getCurrentTorqueCurrent() const;
     int8_t getTemperature() const;
-    bool isMotorConected() const;
+    virtual bool isMotorConected() const;
     // 设置目标状态相关
     void setTargetAngle(fp32 targetAngle);
     void setTargetAngularVelocity(fp32 targetAngularVelocity);
@@ -102,6 +102,17 @@ public:
     fp32 externalClosedloopControl(fp32 setPoint, const fp32 *feedBackData, uint8_t feedBackSize);
 
 protected:
+    struct MotionFeedback {
+        fp32 angle;                    // 编码器轴 rad
+        fp32 angularVelocity;          // 速度环反馈，rad/s
+        fp32 positionAngularVelocity;  // 与角度和圈数同轴的 rad/s，用于串级位置环
+        fp32 revolutions;              // 圈
+        int16_t torqueCurrent;         // 协议原始值
+        bool revolutionsValid;
+    };
+    virtual bool readMotionFeedback(MotionFeedback &feedback) const;
+    fp32 runController(fp32 target, const fp32 *feedback, uint8_t size);
+    fp32 zeroControllerOutput();
     Motor(uint32_t canControlID, uint32_t canFeedbackID, Controller *controller, uint16_t encoderOffset = 0);
     virtual bool decodeCanRxMessage(const can_rx_message_t &rxMessage) = 0;
     virtual void convertControllerOutputToMotorControlData()           = 0;
@@ -233,35 +244,96 @@ protected:
 };
 
 /**
- * @brief 瓴控MG系列电机类
- * @details 该类实现了Motor类的纯虚函数，用于控制瓴控MG系列电机
+ * @brief LK CAN V2.36 反馈与圈数累计。ID 和速度比例由具体电机配置决定。
+ * @note 每台电机选用中断或队列接收之一；队列按接收顺序及时交付，超时从解码时刻开始计。
+ *       首个运动帧为累计零点，相邻运动帧间转角须小于半圈。采样中断时保留末次圈数，
+ *       并标记为无效，直到调用 resetCurrentRevolutionsToZero() 重新建立零点。
  */
-class MotorLKMG : public Motor
+class MotorLKMGBase : public Motor
 {
-protected:
-    uint8_t m_lkMotorID;
-    static constexpr uint16_t m_encoderResolution = 65535;
-    static constexpr int16_t m_openloopLimit      = 2048;
-    uint16_t m_encoderRaw;
-    fp32 m_gearboxRatio;     // 减速比
-    fp32 m_maxVelocity;      // 最大速度，单位rad/s
-    bool m_isMotorClockwise; // 是否顺时针旋转
-    bool m_isBraked;         // 是否刹车
-
 public:
-    MotorLKMG(uint8_t lkMotorID, Controller *controller, uint16_t encoderOffset = 0, fp32 gearboxRatio = 1.0f);
-    void hardwareAngularVelocityClosedloopControl();
-    void hardwareAngularVelocityClosedloopControl(fp32 targetAngularVelocity);
-    void hardwareAngleClosedloopControl();
-    void hardwareAngleClosedloopControl(fp32 targetAngle, fp32 maxVelocity, bool isMotorClockwise);
-    void hardwareRevolutionsClosedloopControl();
-    void hardwareRevolutionsClosedloopControl(fp32 targetAngle, fp32 maxVelocity);
-    void setBrake(bool isBraked);
+    using Motor::MotionFeedback;
+    // 按驱动器实际回复配置选择；不同时接受两个ID，避免误收其他节点的报文。
+    // Id180 保留原驱动默认行为；现场MG8016E-i6 V2.36实测应显式选Id140。
+    enum class FeedbackIdBase : uint16_t { Id140 = 0x140, Id180 = 0x180 };
+    enum class FeedbackState : uint8_t { NeverReceived, Online, Offline };
+    FeedbackState getFeedbackState() const;
+    bool isConfigurationValid() const;
+    bool isMotorConected() const override;
+    bool hasFreshMotionFeedback() const;
+
+    // 在同一个接收快照内读取运动量。过期时返回 false，保留调用方原值。
+    bool readMotionFeedback(MotionFeedback &feedback) const override;
+    void resetCurrentRevolutionsToZero() override;
     uint8_t getMotorID() const { return m_lkMotorID; }
+    const uint8_t *getMotorControlData() override { return m_motorControlData; }
+    bool decodeCanRxMessageFromQueue(const can_rx_message_t *messages, uint8_t size) override;
+    bool decodeCanRxMessageFromISR(const can_rx_message_t *message) override;
+
+protected:
+    MotorLKMGBase(uint32_t controlID, uint8_t motorID, uint8_t maxMotorID, Controller *controller,
+                  uint16_t encoderOffset, uint8_t encoderBits, fp32 gearboxRatio, uint32_t feedbackTimeoutMs,
+                  FeedbackIdBase feedbackIdBase = FeedbackIdBase::Id180);
+    bool decodeMotionFeedback(const uint8_t (&data)[8]);
+    const uint8_t m_lkMotorID;
+    const fp32 m_gearboxRatio; // 电机轴速度 / 输出轴速度
+
+private:
+    bool acceptFeedback(const can_rx_message_t &message);
+    enum class TurnTracking : uint8_t { AwaitingFirst, Tracking, Lost };
+    const uint8_t m_maxMotorID;
+    const uint8_t m_encoderBits;
+    const uint32_t m_feedbackTimeoutMs;
+    uint32_t m_lastFeedbackMs = 0;
+    uint32_t m_lastMotionMs = 0;
+    bool m_hasReceivedFeedback = false;
+    bool m_hasMotionFeedback = false;
+    TurnTracking m_turnTracking = TurnTracking::AwaitingFirst;
+    fp32 m_motorShaftVelocity = 0.0f;
+    uint16_t m_lastEncoderCount = 0;
+};
+
+
+/**
+ * @brief 瓴控 MG 单电机 CAN V2.36。发送0x140 + ID，接收基址可配置为0x140或0x180。
+ * @note 硬件位置以驱动器零点为基准，输入输出轴 rad，速度和限速为输出轴 rad/s。
+ *       软件角度反馈使用编码器轴，可额外扣除 encoderOffset；该软件偏移不改变驱动器绝对零点。
+ */
+class MotorLKMG : public MotorLKMGBase
+{
+public:
+    MotorLKMG(uint8_t lkMotorID, Controller *controller, uint16_t encoderOffset = 0, fp32 gearboxRatio = 1.0f,
+              uint8_t encoderBits = 16, uint32_t feedbackTimeoutMs = 100,
+              FeedbackIdBase feedbackIdBase = FeedbackIdBase::Id180);
+
+
+    // true 表示有帧可发。等待松闸时先生成0x8C，收到松闸回复后再次调用才生成运动命令。
+    // false 表示本次输入或配置无效，调用方应跳过发送。
+    bool hardwareAngularVelocityClosedloopControl();
+    bool hardwareAngularVelocityClosedloopControl(fp32 targetAngularVelocity);
+
+    // D[2..3] 为协议原始转矩电流限制，范围 -2048..2048；前两个重载使用上次设置值，初值为 0。
+    bool hardwareAngularVelocityClosedloopControl(fp32 targetAngularVelocity, int16_t torqueLimit);
+    bool hardwareAngleClosedloopControl();
+    bool hardwareAngleClosedloopControl(fp32 targetAngle, fp32 maxVelocity, bool isMotorClockwise);
+    bool hardwareRevolutionsClosedloopControl();
+    bool hardwareRevolutionsClosedloopControl(fp32 targetAngle, fp32 maxVelocity);
+    bool setBrake(bool isBraked);
+    bool requestMotionFeedback();
 
 protected:
     bool decodeCanRxMessage(const can_rx_message_t &rxMessage) override;
     void convertControllerOutputToMotorControlData() override;
+
+private:
+    static constexpr int16_t m_openloopLimit = 2048;
+    fp32 m_maxVelocity = 0.0f;
+    bool m_isMotorClockwise = true;
+    enum class BrakeState : uint8_t { Engaged, Released, Engaging };
+    BrakeState m_brakeState = BrakeState::Engaged;
+    int16_t m_speedTorqueLimit = 0;
+    bool prepareMotionFrame(uint8_t command);
+    bool setPositionCommand(fp32 angle, fp32 maxVelocity, bool singleTurn, bool clockwise);
 };
 
 /* Exported constants --------------------------------------------------------*/
@@ -271,3 +343,64 @@ protected:
 /* Exported functions prototypes ---------------------------------------------*/
 
 /* Defines -------------------------------------------------------------------*/
+
+/**
+ * @brief 瓴控MG系列广播固件电机类
+ * @details 该类实现了Motor类的纯虚函数，适配V2.35广播控制协议和V2.36反馈协议
+ * @note 广播CAN ID：仅支持0x280力矩控制
+ * @note 电机ID为1~4，分别占用DATA[0:1]、DATA[2:3]、DATA[4:5]、DATA[6:7]，均为低字节在前
+ * @note 反馈ID为feedbackIdBase + 电机ID，默认0x180；实际回复0x140+ID的设备须显式选Id140。
+ *       本类仅构造和解析报文，CAN发送及驱动配置由调用方负责。
+ * @note 可先下发零力矩尝试获取A1运动反馈；A1不包含故障字，不能确认无故障。
+ * @note 本类仍按V2.35/V2.36的速度坐标和运动反馈布局工作，不宣称兼容V2.40。
+ * @code
+ * MotorLKMGmulti motor(1, nullptr, 0, 16, 6.0f, 100,
+ *                     MotorLKMGmulti::FeedbackIdBase::Id140); // ID1回复0x141
+ * @endcode
+ */
+class MotorLKMGmulti : public MotorLKMGBase
+{
+public:
+    MotorLKMGmulti(uint8_t motorID, Controller *controller, uint16_t encoderOffset = 0,
+                  uint8_t encoderBits = 16, fp32 gearboxRatio = 1.0f, uint32_t feedbackTimeoutMs = 100,
+                  FeedbackIdBase feedbackIdBase = FeedbackIdBase::Id180);
+    enum class ComposeResult : uint8_t {
+        Success, InvalidArgument, InvalidConfiguration, DuplicateMotorID,
+        InvalidCommand, IncompleteMotorSet
+    };
+    // 驱动器内部电流闭环目标：协议原始值[-2000,2000]，不是A或Nm；不调用Controller。
+    // false时保留原命令，调用方必须跳过发送。组帧发送不依赖运动反馈。
+    bool hardwareTorqueCurrentClosedloopControl(int16_t rawCurrent);
+    /**
+     * @brief 将同一CAN总线上各电机的控制槽位合并为广播帧
+     * @param motors 电机指针数组，应列出总线上全部已安装电机，且控制CAN ID必须一致
+     * @param count 电机数量，范围1~4，电机ID不可重复
+     * @param header 成功时写入标准数据帧报文头
+     * @param data 成功时写入8字节广播数据，未列出的电机槽位填零
+     * @return true 组帧成功，可发送；false 组帧失败，header和data保持原值
+     * @note 此重载不校验已安装电机集合，也无法核实电机是否属于同一总线。
+     */
+    static bool composeControlFrame(MotorLKMGmulti *const *motors, uint8_t count,
+                                    CAN_TxHeaderTypeDef &header, uint8_t (&data)[8]);
+    /**
+     * @brief 合并广播控制帧，并按位掩码校验已安装电机集合
+     * @param motors 同一CAN总线上的电机指针数组，要求与上述重载一致
+     * @param count 电机数量，范围1~4
+     * @param header 成功时写入报文头，失败时不变
+     * @param data 成功时写入8字节广播数据，失败时不变
+     * @param expectedMotorMask 位0~3分别表示已安装的ID 1~4；为0时跳过集合校验，高4位必须为0
+     * @param result 可选的组帧结果指针，非空时写入成功或具体失败原因
+     * @return true 组帧成功；false 参数、配置、命令或电机集合不满足要求
+     * @note 力矩命令可直接发送，无需在线状态或反馈。
+     *       零力矩并不保证制动或失能。
+     *       总线发送使用合并成功的帧。getMotorControlData() 仅提供单个对象的槽位缓存。
+     */
+    static bool composeControlFrame(MotorLKMGmulti *const *motors, uint8_t count,
+                                    CAN_TxHeaderTypeDef &header, uint8_t (&data)[8],
+                                    uint8_t expectedMotorMask, ComposeResult *result = nullptr);
+protected:
+    bool decodeCanRxMessage(const can_rx_message_t &message) override;
+    void convertControllerOutputToMotorControlData() override;
+private:
+    void setControlValue(fp32 value);
+};
